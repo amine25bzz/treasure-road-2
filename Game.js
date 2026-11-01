@@ -143,7 +143,9 @@ const HEROES = [
 ];
 IMG.heroes = HEROES.map(() => ({}));
 loadPlayerSprites(HEROES[gameConfig.side].id, IMG.heroes[gameConfig.side], gameConfig.side);   // البطل المختار فوراً
+IMG.car = document.createElement('img');   // سيارة المشهد الأخير (تُحمَّل لاحقاً)
 function loadOtherHeroes() {   // الأبطال الآخرون (رهائن/حلفاء) بعد بدء اللعبة
+  if (!IMG.car.getAttribute('src')) { hiddenAssets.appendChild(IMG.car); IMG.car.src = 'images/car.png'; }
   HEROES.forEach((h, i) => { if (!IMG.heroes[i].idle) loadPlayerSprites(h.id, IMG.heroes[i], i); });
 }
 // الرهائن (الأبطال وهم مربوطون): player1h-shok / player2h--gameover / player3h-gameover / player4h--gameover
@@ -375,7 +377,28 @@ const STAGES = [
     water: { x0: 3885, x1: 4655, top: 520, bottom: 724 },
     packs: [['soldier', 'raptor', 'thug'], ['soldier', 'soldier', 'raptor', 'raptor'], ['soldier', 'ninja', 'raptor', 'raptor'], ['soldier', 'soldier', 'raptor', 'raptor', 'thug'], ['soldier', 'soldier', 'ninja', 'raptor', 'raptor', 'raptor']],
     boss: { type: 'trike', name: 'KING TRIKE', spr: 'trike', hp: 340, dmg: 18, spd: 95 } },
-  { title: 'STAGE 4', name: 'WAREHOUSE & DESERT', event: ['airstrike', 'ninjaDrop', 'ambush'], evFirst: 700, evGap: 1000,
+  { title: 'STAGE 4', name: 'THE LOST VALLEY', event: ['airstrike', 'ninjaDrop', 'ambush'], evFirst: 700, evGap: 1000,
+    // من قراءة background-stage4.png (4000×335) بإحداثيات الصورة:
+    // المشي فوق التراب فقط (حافة العشب العلوية y≈200)، ولا دخول في خط النار أسفل اليمين
+    walk: {
+      lo: [[0, 200], [3950, 200], [4000, 272]],
+      hi: [[0, 372], [3640, 372], [3668, 286], [3905, 286], [3932, 372], [4000, 372]]
+    },
+    flames: [   // خط النار على الأرض + النار فوق إطار الباب الحجري
+      { kind: 'fire', x: 3700, y: 333, w: 52, h: 40 }, { kind: 'fire', x: 3748, y: 333, w: 56, h: 46 },
+      { kind: 'fire', x: 3798, y: 333, w: 56, h: 42 }, { kind: 'fire', x: 3846, y: 333, w: 56, h: 46 },
+      { kind: 'fire', x: 3884, y: 333, w: 40, h: 36 },
+      { kind: 'fire', x: 3975, y: 50, w: 52, h: 46 }
+    ],
+    // الماء: البحيرة والشلالات خلف السياج الخشبي + بحيرات صغيرة بعيدة
+    pools: [
+      { x0: 3215, x1: 3505, top: 112, bottom: 152 },
+      { x0: 1712, x1: 1765, top: 118, bottom: 142 },
+      { x0: 225, x1: 322, top: 139, bottom: 157 },
+      { x0: 2272, x1: 2298, top: 139, bottom: 155 }
+    ],
+    // الباب الحجري الأخير (حافة الصورة اليمنى): يُفجَّر بقنبلة بعد قتل الزعيم ثم يدخل البطل عبره جرياً
+    stoneDoor: { x0: 3958, x1: 4000, top: 32, bottom: 205, cx: 3982 },
     packs: [['soldier', 'ninja', 'cop', 'thug'], ['soldier', 'soldier', 'ninja', 'thug', 'cop'], ['ninja', 'ninja', 'soldier', 'cop', 'raptor'], ['soldier', 'ninja', 'cop', 'cop', 'raptor', 'thug'], ['soldier', 'soldier', 'ninja', 'ninja', 'cop', 'thug', 'raptor']],
     boss: { type: 'warlord', name: 'THE WARLORD', spr: 'boss', hp: 460, dmg: 18, spd: 90 } }
 ];
@@ -639,7 +662,9 @@ function hurtEnemy(e, dmg, dir, kd) {
     if (e.hp <= 0) {
       e.hp = 0; e.dying = true; e.st = 'dead'; e.t = 0; G.kills++; G.bossDead = true; shake = 12;
       items.push({ x: e.x, y: e.y, t: 0, kind: 'health' });
-      toast(e.name + ' DEFEATED! ' + (curStage().window ? 'ESCAPE THROUGH THE WINDOW!' : G.stage < STAGE_COUNT - 1 ? 'GATE OPEN - NEXT STAGE!' : 'GATE OPEN - RUN!'), 3000);
+      const CS_ = curStage();
+      toast(e.name + ' DEFEATED! ' + (CS_.window ? 'ESCAPE THROUGH THE WINDOW!' : CS_.stoneDoor ? 'BLOW UP THE STONE DOOR WITH A BOMB!' : G.stage < STAGE_COUNT - 1 ? 'GATE OPEN - NEXT STAGE!' : 'GATE OPEN - RUN!'), 3600);
+      if (CS_.stoneDoor && me && me.bombs < 1) { me.bombs = 1; floatText(me.x, me.y - 95, '+1 BOMB', '#ffb347'); }
     }
     return;
   }
@@ -666,7 +691,61 @@ function hurtEnemy(e, dmg, dir, kd) {
   }
 }
 
+// ---------- الباب الحجري الأخير: تفجيره بالقنبلة وتطاير الحجارة ----------
+let rocks = [];
+function doorW() { const D = curStage().stoneDoor; if (!D) return null; const k = bgScale(); return { x0: D.x0 * k, x1: D.x1 * k, top: D.top * k, bottom: D.bottom * k, cx: D.cx * k }; }
+function blowDoor() {
+  if (G.doorBlown) return;
+  const D = doorW();
+  G.doorBlown = true; G.doorBlownT = 0;
+  shake = 18; playSnd(SND.boom); playSnd(SND.box_destroy);
+  explosions.push({ x: D.cx, y: D.bottom, z: (D.bottom - D.top) * .45, t: 0, dur: .7, maxR: 110 });
+  const floorY = yBounds(D.cx - 30)[0];
+  for (let i = 0; i < 48; i++) {
+    const sy = rr(D.top, D.bottom), fy = floorY + rr(0, 70);
+    const pts = []; const n = 5 + (i % 3);
+    for (let j = 0; j < n; j++) { const a = j / n * 6.283, r = rr(.6, 1); pts.push([Math.cos(a) * r, Math.sin(a) * r]); }
+    rocks.push({ x: rr(D.x0, D.x1), y: fy, z: Math.max(0, fy - sy), vx: rr(-460, -40), vz: rr(40, 330), r: rr(0, 6.3), vr: rr(-9, 9),
+      s: rr(3, i % 6 === 0 ? 13 : 8), l: rr(2.6, 4), pts: pts, c: ['#8f8a80', '#a39c8f', '#6f6a62', '#b5ac9a'][i % 4] });
+  }
+  for (let i = 0; i < 30; i++) parts.push({ x: D.cx + rr(-20, 10), y: floorY + 5, z: rr(10, D.bottom - D.top), vx: rr(-220, 30), vz: rr(-20, 160), l: rr(.5, 1.1), c: i % 2 ? '#c9bfa8' : '#8d8577' });
+  toast('THE DOOR IS OPEN!', 2000);
+}
+function updateRocks(dt) {
+  for (const p of rocks) {
+    p.l -= dt; p.vz -= 900 * dt; p.x += p.vx * dt; p.z += p.vz * dt; p.r += p.vr * dt;
+    if (p.z <= 0) { p.z = 0; p.vz = -p.vz * .35; p.vx *= .5; p.vr *= .5; }
+  }
+  rocks = rocks.filter(p => p.l > 0);
+}
+function drawStoneDoor(g, t) {
+  const D = doorW();
+  if (D && G.doorBlown) {
+    // فتحة مظلمة مكان الباب المحطم، وكومة حجارة عند قاعدته
+    const x0 = D.x0 - cam, x1 = D.x1 - cam + 2;
+    const grd = g.createLinearGradient(x0, 0, x1, 0);
+    grd.addColorStop(0, 'rgba(10,8,6,.92)'); grd.addColorStop(1, 'rgba(0,0,0,.98)');
+    g.fillStyle = grd;
+    g.beginPath(); g.moveTo(x0 + 6, D.top + 10); g.lineTo(x1, D.top + 4); g.lineTo(x1, D.bottom + 40); g.lineTo(x0, D.bottom); g.closePath(); g.fill();
+    g.fillStyle = '#7d776d';
+    for (let i = 0; i < 9; i++) { const rx = x0 - 6 + i * 6, ry = D.bottom + 2 - (i % 3) * 3; g.beginPath(); g.ellipse(rx, ry, 6, 4, i, 0, 6.3); g.fill(); }
+  } else if (D && G.bossDead && G.phase === 'play') {
+    // سهم يشير إلى الباب الحجري
+    const ax = D.cx - cam - 8, ay = D.top - 8 + Math.sin(t * 6) * 4;
+    g.fillStyle = '#000'; g.beginPath(); g.moveTo(ax - 10, ay - 13); g.lineTo(ax + 10, ay - 13); g.lineTo(ax, ay + 1); g.closePath(); g.fill();
+    g.fillStyle = '#ffc233'; g.beginPath(); g.moveTo(ax - 8, ay - 12); g.lineTo(ax + 8, ay - 12); g.lineTo(ax, ay - 1); g.closePath(); g.fill();
+  }
+  for (const p of rocks) {
+    g.save(); g.translate(p.x - cam, p.y - p.z); g.rotate(p.r); g.globalAlpha = clamp(p.l, 0, 1);
+    g.fillStyle = p.c; g.strokeStyle = 'rgba(40,34,28,.8)'; g.lineWidth = 1;
+    g.beginPath(); p.pts.forEach((q, i) => i ? g.lineTo(q[0] * p.s, q[1] * p.s) : g.moveTo(q[0] * p.s, q[1] * p.s)); g.closePath(); g.fill(); g.stroke();
+    g.restore();
+  }
+}
+
 function createExplosion(x, y, z, radius, dm, owner) {
+  // قنبلة البطل قرب الباب الحجري بعد قتل الزعيم الأخير → يتحطم الباب
+  if (owner === 'me' && G.bossDead && !G.doorBlown && curStage().stoneDoor) { const D = doorW(); if (Math.abs(x - D.cx) < radius + 50) blowDoor(); }
   explosions.push({ x: x, y: y, z: z, t: 0, dur: .55, maxR: radius });
   playSnd(SND.boom); shake = Math.min(14, shake + 8);
   for (let i = 0; i < 24; i++) {
@@ -1112,7 +1191,7 @@ function updateBoss(e, dt) {
       else moveY();
     } else {
       // THE WARLORD
-      if (e.shootCd <= 0 && !flee && ady < 20 && adx > 90 && adx < 440) bossShoot(e, D);
+      if (e.shootCd <= 0 && !flee && ady < 40 && adx > 90 && adx < 440) bossKnives(e, D);   // الزعيم الأخير يرمي السكاكين بدل إطلاق النار
       else if (e.bombCd <= 0 && adx > 120 && adx < 260) bossBomb(e, D);
       else if (e.dodgeT > 0) { e.dodgeT -= dt; e.y += e.dd * 150 * dt; e.mv = true; }
       else if (flee) { e.x += flee * spd * 1.6 * dt; e.mv = true; }
@@ -1711,6 +1790,7 @@ function render(t) {
   drawFlames(g, t);
   drawWindowAndShards(g, t);
   drawWater(g, t);
+  drawStoneDoor(g, t);
 
   // Items
   for (const it of items) {
@@ -1734,6 +1814,7 @@ function render(t) {
   // CP_H = ارتفاع Checkpoint على الشاشة، CP_Y = موضع قاعدتها (رقم أصغر = أعلى)
   const CP_H = 20, CP_Y = 160, CP_X = WORLD - 28;
   if (G.stage === 0) { /* لا بوابة في المرحلة 0: الباب هو المخرج */ }
+  else if (curStage().stoneDoor) { /* المخرج الأخير: الباب الحجري (بدل endpoint.gif) */ }
   else if (lastStage) placeSprite(GATE, 'g', IMG.gate, gx, 336, 1, 336, gOn, el => propSize(el, HERO_VIS));
   else if (curStage().window) { /* المخرج هو النافذة */ }
   else placeSprite(GATE, 'cp', IMG.checkpoint, CP_X, CP_Y, 1, 336, CP_X > cam - 200 && CP_X < cam + VW + 200, el => propSize(el, CP_H));
@@ -1875,6 +1956,8 @@ function render(t) {
     });
   }
 
+  if (G.endScene) renderEnding(g, t);
+
   // Particles
   for (const p of parts) {
     g.globalAlpha = clamp(p.l * 3, 0, 1);
@@ -1935,16 +2018,20 @@ function settleRound(win) {
   S.inv.bomb = Math.max(0, (S.inv.bomb || 0) - (G.boughtBomb - keepB));
   S.inv.mine = Math.max(0, (S.inv.mine || 0) - (G.boughtMine - keepM));
   if (G.ammoUsed) S.inv.ammo = Math.max(0, (S.inv.ammo || 0) - 1);
-  G.reward = G.kills * 8 + G.stagesCleared * 100 + (win ? 250 : 0);
+  G.reward = (G.kills - (G.paidKills || 0)) * 8 + (G.stagesCleared - (G.paidStages || 0)) * 100 + (win ? 250 : 0);
   S.coins += G.reward;
   writeSave(S);
+  // ما دُفع/استُهلك لا يُحسب مرة أخرى إذا أكمل اللاعب بعد GAME OVER
+  G.paidKills = G.kills; G.paidStages = G.stagesCleared;
+  G.boughtBomb = keepB; G.boughtMine = keepM; G.ammoUsed = false;
 }
 
 function newRound() {
+  stopEnding();
   me = mkHero(G.side);
   applyLoadout();
   allies = [];
-  G.time = 0; G.paused = false; G.kills = 0; G.dmgDealt = 0; G.result = null; G.stagesCleared = 0; G.dropping = false;
+  G.time = 0; G.paused = false; G.kills = 0; G.dmgDealt = 0; G.result = null; G.stagesCleared = 0; G.paidKills = 0; G.paidStages = 0; G.dropping = false;
   loadStage(0);
 }
 
@@ -1957,7 +2044,7 @@ function loadStage(n) {
   fitWorld();
   enemies = []; items = []; parts = []; floaters = []; bullets = []; bombs = []; mines = []; crates = []; barrels = []; explosions = []; lobs = [];
   waveIdx = 0; G.timeLeft = LEVEL_TIME; G.timeUp = false; lastCount = -1;
-  G.bossDead = false; G.bossIntro = false; G.bossDeadT = 0; G.winBroken = false; G.winJ = false; shards = []; ripples = [];
+  G.bossDead = false; G.bossIntro = false; G.bossDeadT = 0; G.winBroken = false; G.winJ = false; shards = []; ripples = []; rocks = []; G.doorBlown = false; G.doorRun = false;
   G.evX = START + S.evFirst; G.evN = 0;
   makeEnemyPlan();
   if (!S.rooftop) { spawnWorldObjects(); fitObjectsToGround(); }
@@ -2097,15 +2184,26 @@ function updateWater(dt) {
 }
 function drawWater(g, t) {
   const L = lakeW();
-  if (!L) return;
+  if (L) drawWaterRect(g, t, L, 16, 46);
+  const P = curStage().pools;
+  if (P) {
+    const k = bgScale();
+    for (const p of P) {
+      const r = { x0: p.x0 * k, x1: p.x1 * k, top: p.top * k, bottom: p.bottom * k };
+      drawWaterRect(g, t, r, Math.max(3, Math.round((r.bottom - r.top) / 6)), Math.max(4, Math.round((r.x1 - r.x0) * (r.bottom - r.top) / 260)));
+    }
+  }
+  drawRipples(g);
+}
+function drawWaterRect(g, t, L, nLines, nGlints) {
   const x0 = L.x0 - cam, x1 = L.x1 - cam;
   if (x1 < -20 || x0 > VW + 20) return;
   g.save();
   g.beginPath(); g.rect(x0, L.top, x1 - x0, L.bottom - L.top); g.clip();
   // تموجات أفقية تتحرك ببطء مع النسيم
   const wind = t * 14;
-  for (let i = 0; i < 16; i++) {
-    const y = L.top + 4 + i * (L.bottom - L.top - 4) / 16 + Math.sin(t * .9 + i) * 1.5;
+  for (let i = 0; i < nLines; i++) {
+    const y = L.top + 4 + i * (L.bottom - L.top - 4) / nLines + Math.sin(t * .9 + i) * 1.5;
     g.strokeStyle = 'rgba(220,250,255,' + (.07 + .05 * Math.sin(t * 1.3 + i * 1.7)) + ')';
     g.lineWidth = i < 3 ? 1.3 : 1;
     g.beginPath();
@@ -2116,7 +2214,7 @@ function drawWater(g, t) {
     g.stroke();
   }
   // لمعات صغيرة تنجرف مع الهواء
-  for (let i = 0; i < 46; i++) {
+  for (let i = 0; i < nGlints; i++) {
     const fx = ((i * 97.3 + wind * (1 + (i % 3) * .3)) % (L.x1 - L.x0)) + L.x0 - cam;
     const fy = L.top + 6 + ((i * 53.7) % (L.bottom - L.top - 10));
     const a = .18 + .18 * Math.sin(t * 3 + i * 2.1);
@@ -2129,6 +2227,8 @@ function drawWater(g, t) {
   for (let x = x0; x <= x1; x += 6) { const yy = L.top + 1 + Math.sin((x + cam) * .08 + t * 2.2) * .9; x === x0 ? g.moveTo(x, yy) : g.lineTo(x, yy); }
   g.stroke();
   g.restore();
+}
+function drawRipples(g) {
   // تموجات الأقدام: دوائر تتسع وتختفي
   for (const r of ripples) {
     const k = r.t / r.life, rx = 5 + r.r * k;
@@ -2153,6 +2253,26 @@ function dropFromWindow() {
 
 function stepTransition(dt) {
   G.transT += dt;
+  if (G.doorRun) {
+    // الدخول عبر الباب الحجري المحطم جرياً
+    const D = doorW();
+    const run = (o, delay) => {
+      if (o.hidden || G.transT < delay) { if (!o.hidden) { o.mv = false; o.st = 'i'; } return o.hidden; }
+      o.st = 'i'; o.atkT = -1; o.vicT = 0; o.z = 0; o.face = 1; o.mv = true; o.ph += dt * 18;
+      const tx = D.cx + 10, ty = yBounds(D.x0)[0] + 4, dx = tx - o.x, dy = ty - o.y, d = Math.hypot(dx, dy);
+      if (d > 5) { const st = Math.min(d, 320 * dt); o.x += dx / d * st; o.y += dy / d * st; if (Math.random() < .4) parts.push({ x: o.x - 10, y: o.y, z: 2, vx: rr(-80, -20), vz: rr(20, 60), l: rr(.15, .3), c: '#b89a74' }); }
+      else { o.hidden = true; o.mv = false; }
+      return o.hidden;
+    };
+    let all = run(me, 0), d = .35;
+    for (const a of allies) { if (a.dead) continue; if (!run(a, d)) all = false; d += .3; }
+    if (all && !G.transOutT) G.transOutT = G.transT;
+    if (G.transOutT && G.transT > G.transOutT + .4) {
+      G.doorRun = false; G.transOutT = 0;
+      G.stagesCleared = STAGE_COUNT; startEnding();   // المشهد السينمائي الأخير ثم الفوز
+    }
+    return;
+  }
   if (G.winJ) {
     // نهاية المرحلة 1: القفز من النافذة الكبيرة
     let out = windowActor(me, dt, 0, true);
@@ -2267,13 +2387,17 @@ function endRound(win) {
   G.phase = 'over'; G.overT = 0; G.result = { win: win };
   settleRound(win);
   playSnd(win ? SND.win : SND.lose);
-  banner(win ? 'VICTORY!' : 'DEFEAT', true);
+  banner(win ? 'VICTORY!' : 'GAME OVER', true);
+  if (!win) SND.bgm.pause();
 }
 
 function showResult() {
   const w = G.result.win;
   $('#rbox').classList.toggle('lose', !w);
-  $('#rTitle').textContent = w ? 'YOU WIN!' : 'YOU LOSE!';
+  $('#rTitle').textContent = w ? 'YOU WIN!' : 'GAME OVER';
+  // نافذة GAME OVER: كونتينيو + ريستارت + منيو. الفوز: بلاي أجين + منيو
+  contBtn.hidden = w;
+  $('#rAgain').textContent = w ? 'PLAY AGAIN' : 'RESTART';
   $('#rSub').textContent = w ? 'You beat all 4 stages and every gang boss!'
     : (G.timeUp ? 'Time ran out and you lost your last life.' : 'You ran out of lives.') + ' Reached ' + curStage().title + ' of ' + LAST_NUM + '.';
   $('#rCoins').textContent = '+' + G.reward + ' COINS';
@@ -2286,7 +2410,26 @@ function showResult() {
 
 function playAgain() {
   $('#result').hidden = true;
+  if (!muted) SND.bgm.play().catch(() => {});
   startCountdown();
+}
+
+// CONTINUE: يكمل اللعب من نفس المكان الذي مات فيه، بأرواح كاملة، في نفس المرحلة وبنفس الأعداء
+function continueGame() {
+  if (!G.result || G.result.win) return;
+  $('#result').hidden = true; banner('');
+  const m = me;
+  m.lives = 3; m.hp = 100; m.dead = false; m.respT = 0;
+  m.st = 'i'; m.stT = 0; m.z = 0; m.vz = 0; m.vx = 0; m.atkT = -1; m.ah = false; m.throwT = -1;
+  m.inv = 2.5;   // حماية قصيرة بعد العودة
+  m.hitChain = 0;
+  if (G.timeLeft <= 0 || G.timeUp) G.timeLeft = LEVEL_TIME;
+  G.timeUp = false; G.result = null; G.overT = 0;
+  bullets = bullets.filter(b => b.owner === 'me'); lobs = [];
+  floatText(m.x, m.y - 90, 'CONTINUE!', '#9dff8a');
+  G.phase = 'play';
+  inp.atk = inp.jmp = inp.sw = inp.bomb = inp.mine = false;
+  if (!muted) SND.bgm.play().catch(() => {});
 }
 
 function initGame() {
@@ -2441,8 +2584,129 @@ function drawDoor(g, t) {
   }
 }
 
+// ==========================================
+// المشهد السينمائي الأخير (20 ثانية، بدون لعب ولا تحكم) في خلفية الغابة:
+// السيارة الحمراء (car.png وفيها MINA و MAX) تسير، وJACK و REX يجريان خلفها ثم بجانبها ويغيّران سرعتهما
+// ==========================================
+const ENDING = {
+  fade: .55, bgStage: 3, endHold: .8,        // المشهد يستمر حتى نهاية خلفية الغابة، ثم لحظة قصيرة قبل الفوز
+  camSpeed: 92,                               // سرعة تحرك الكاميرا/السيارة/الأبطال في العالم
+  carH: 118, carY: 328, carScreenX: .6,       // ارتفاع السيارة على الشاشة، عمقها، ومكانها الأفقي
+  // عجلات car.png (بإحداثيات الصورة 1000×476): المركز ونصف القطر
+  wheels: [{ x: 228, y: 380, r: 88 }, { x: 790, y: 380, r: 88 }],
+  // العدّاءان: offset = المسافة خلف مركز السيارة (تتغير: مرة خلفها ومرة بجانبها)
+  runners: [{ side: 0, y: 366, base: 230, amp: 210, w: .52, ph: .4 }, { side: 1, y: 350, base: 160, amp: 190, w: .37, ph: 2.6 }]
+};
+let carEl = null, endDust = [], endRunners = [];
+function startEnding() {
+  G.phase = 'ending'; G.endT = 0; G.endHoldT = 0; G.endScene = true; G.endSwitched = false;
+  bgDiv.style.opacity = '0'; layer.style.opacity = '0';
+}
+function switchToEndingScene() {
+  G.endSwitched = true;
+  G.stage = ENDING.bgStage;
+  IMG.bg = IMG.bgs[ENDING.bgStage]; bgCropH = 0;
+  bgDiv.style.backgroundImage = 'url(' + BG_IMGS[ENDING.bgStage] + ')';
+  fitWorld();
+  enemies = []; items = []; bullets = []; bombs = []; mines = []; crates = []; barrels = []; hostages = []; explosions = []; lobs = []; shards = []; rocks = []; parts = []; floaters = []; ripples = []; endDust = [];
+  me.hidden = true; allies.forEach(a => a.hidden = true);
+  endRunners = ENDING.runners.map(r => Object.assign({ o: {} }, r));
+  cam = 0;
+  if (!carEl) {
+    carEl = document.createElement('canvas'); carEl.width = 1000; carEl.height = 476;
+    carEl.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none';
+  }
+  layer.appendChild(carEl);
+  bgDiv.style.opacity = '1'; layer.style.opacity = '1';
+  banner('');
+}
+function endingCar() { const h = ENDING.carH, w = h * 1000 / 476; return { x: cam + VW * ENDING.carScreenX, y: ENDING.carY, w: w, h: h, k: h / 476 }; }
+function stepEnding(dt) {
+  G.endT += dt;
+  if (!G.endSwitched) { if (G.endT >= ENDING.fade && bgReady(ENDING.bgStage)) switchToEndingScene(); return; }
+  const T = G.endT - ENDING.fade;
+  // الكاميرا تتقدم بسلاسة (تسارع في البداية)
+  cam = Math.min(WORLD - VW, ENDING.camSpeed * Math.max(0, T - .6 * (1 - Math.min(1, T / 1.2))));
+  const C = endingCar();
+  // غبار العجلات: سحابات تتخلف خلف السيارة
+  const L = lakeW();
+  const wet = x => L && x > L.x0 && x < L.x1;
+  for (const wh of ENDING.wheels) {
+    const wx = C.x - C.w / 2 + wh.x * C.k;
+    if (wet(wx)) {   // داخل البحيرة: رذاذ وتموجات بدل الغبار
+      if (Math.random() < .5) ripples.push({ x: wx, y: C.y, t: 0, life: 1, r: 34 });
+      for (let i = 0; i < 3; i++) parts.push({ x: wx + rr(-10, 4), y: C.y, z: 2, vx: rr(-140, 30), vz: rr(90, 230), l: rr(.3, .6), c: i % 2 ? '#d8f6ff' : '#8fd8ea' });
+      continue;
+    }
+    if (Math.random() < .8) endDust.push({ x: C.x - C.w / 2 + (wh.x - 70) * C.k, y: C.y + rr(-3, 3), z: rr(0, 6), vx: ENDING.camSpeed * rr(.05, .35), vz: rr(8, 30), r: rr(5, 9), gr: rr(22, 40), l: rr(.9, 1.6), t: 0 });
+  }
+  // العدّاءان يغيّران سرعتهما: مرة خلف السيارة ومرة بجانبها
+  for (const r of endRunners) {
+    const off = r.base + r.amp * Math.sin(T * r.w + r.ph) + 25 * Math.sin(T * r.w * 3.1 + r.ph);
+    r.x = C.x - off; r.y2 = r.y + Math.sin(T * 7 + r.ph) * 1.5;
+    r.dustT = (r.dustT || 0) - dt;
+    if (r.dustT <= 0 && wet(r.x)) { r.dustT = .16; ripples.push({ x: r.x, y: r.y, t: 0, life: .8, r: 20 }); for (let i = 0; i < 3; i++) parts.push({ x: r.x, y: r.y, z: 1, vx: rr(-70, 40), vz: rr(50, 120), l: rr(.2, .4), c: '#cdf3ff' }); }
+    else if (r.dustT <= 0) { r.dustT = .14; endDust.push({ x: r.x - 8, y: r.y, z: 1, vx: ENDING.camSpeed * .3, vz: rr(6, 18), r: 3, gr: rr(10, 16), l: rr(.5, .8), t: 0 }); }
+  }
+  for (const d of endDust) { d.t += dt; d.x += d.vx * dt; d.z += d.vz * dt; d.vz *= .96; }
+  endDust = endDust.filter(d => d.t < d.l);
+  // ينتهي المشهد عند وصول الكاميرا إلى نهاية الخلفية
+  if (cam >= WORLD - VW - .5) G.endHoldT = (G.endHoldT || 0) + dt;
+  if (G.phase === 'ending' && G.endHoldT >= ENDING.endHold) { G.phase = 'play'; endRound(true); }
+}
+function renderEnding(g, t) {
+  if (!G.endSwitched) return;
+  const C = endingCar();
+  // الغبار (تحت الشخصيات)
+  for (const d of endDust) {
+    const k = d.t / d.l, r = d.r + d.gr * k, x = d.x - cam, y = d.y - d.z;
+    const grd = g.createRadialGradient(x, y, 1, x, y, r);
+    grd.addColorStop(0, 'rgba(196,160,112,' + (.42 * (1 - k)) + ')'); grd.addColorStop(1, 'rgba(196,160,112,0)');
+    g.fillStyle = grd; g.beginPath(); g.arc(x, y, r, 0, 6.3); g.fill();
+  }
+  shadow(g, C.x - cam, C.y + 1, C.w * .46, 9);
+  // السيارة: ترتج قليلاً، وعجلاتها تدور فعلاً (ندوّر جزء العجلة من الصورة نفسها)
+  const img = IMG.car;
+  if (carEl && img.complete && img.naturalWidth) {
+    const cx = carEl.getContext('2d');
+    cx.clearRect(0, 0, 1000, 476);
+    const bob = Math.sin(t * 17) * 1.2 + Math.sin(t * 5.3) * 1;   // ارتجاج الهيكل (العجلات ثابتة على الأرض)
+    cx.drawImage(img, 0, bob);
+    const ang = G.endT * 9;   // دوران العجلات باتجاه الحركة (يمين)
+    for (const wh of ENDING.wheels) {
+      for (let j = 0; j < 3; j++) {   // نسخ متتالية = ضبابية حركة
+        cx.save(); cx.globalAlpha = j === 0 ? 1 : .35;
+        cx.beginPath(); cx.arc(wh.x, wh.y, wh.r, 0, 6.283); cx.clip();
+        cx.translate(wh.x, wh.y); cx.rotate(ang - j * .12); cx.drawImage(img, -wh.x, -wh.y);
+        cx.restore();
+      }
+      // غبار يغطي أسفل العجلة
+      const gg = cx.createRadialGradient(wh.x - 40, wh.y + 80, 4, wh.x - 40, wh.y + 80, 120);
+      gg.addColorStop(0, 'rgba(200,165,118,.55)'); gg.addColorStop(1, 'rgba(200,165,118,0)');
+      cx.fillStyle = gg; cx.fillRect(wh.x - 170, wh.y - 20, 260, 120);
+    }
+    carEl.style.width = (C.w * CS) + 'px'; carEl.style.height = (C.h * CS) + 'px';
+    carEl.style.transform = 'translate(' + ((C.x - cam - C.w / 2) * CS) + 'px,' + ((C.y - C.h + 6) * CS) + 'px)';
+    carEl.style.zIndex = Math.round(C.y);
+  }
+  // العدّاءان JACK و REX
+  for (const r of endRunners) {
+    const p = IMG.heroes[r.side];
+    if (!p || !p.walk) continue;
+    shadow(g, r.x - cam, r.y + 1, 22, 6);
+    placeSprite(r.o, 'run', p.walk, r.x, r.y2, 1, Math.round(r.y), true, el => heroSize(el, r.side, false));
+  }
+}
+function stopEnding() {
+  G.endScene = false; G.endSwitched = false;
+  if (carEl && carEl.parentNode) carEl.remove();
+  endDust = []; endRunners = [];
+}
+
 function stepGame(dt) {
-  if (G.phase === 'intro') {
+  if (G.phase === 'ending') {
+    stepEnding(dt);
+  } else if (G.phase === 'intro') {
     stepIntro(dt);
   } else if (G.phase === 'count') {
     G.countT -= dt;
@@ -2489,6 +2753,15 @@ function stepGame(dt) {
       // بعد قتل زعيم المرحلة 1: عندما يتوجه البطل إلى النافذة ويصل قربها يقفز منها
       if (me.x >= winW().launchX - 30 && me.st !== 'd') { stageClear(); G.winJ = true; G.transT = 0; }
     }
+    else if (curStage().stoneDoor) {
+      // بعد تفجير الباب: البطل يجري إلى داخله ثم الفوز
+      if (G.doorBlown && !me.dead) { G.doorBlownT += dt; if (G.doorBlownT > .9) { G.phase = 'trans'; G.transT = 0; G.doorRun = true; G.stagesCleared++; } }
+      // لا يعلق اللاعب: إذا ضاعت قنبلته يحصل على أخرى
+      if (G.bossDead && !G.doorBlown && me.bombs < 1 && !bombs.some(b => b.owner === 'me')) {
+        G.bombGiveT = (G.bombGiveT || 0) + dt;
+        if (G.bombGiveT > 1.5) { G.bombGiveT = 0; me.bombs = 1; floatText(me.x, me.y - 95, '+1 BOMB', '#ffb347'); }
+      }
+    }
     else if (G.bossDead && !me.dead && me.x > WORLD - 120) {
       // لا فوز إلا بعد إكمال المراحل الأربع
       if (G.stage < STAGE_COUNT - 1) stageClear();
@@ -2498,6 +2771,7 @@ function stepGame(dt) {
   } else if (G.phase === 'trans') {
     stepTransition(dt);
   } else if (G.phase === 'over') {
+    if (G.endScene) stepEnding(dt);
     G.overT += dt;
     if (G.overT > 1.5 && $('#result').hidden) showResult();
     if (me) me.inv = Math.max(0, me.inv - dt);
@@ -2505,6 +2779,7 @@ function stepGame(dt) {
 
   updateShards(dt);
   updateWater(dt);
+  updateRocks(dt);
   for (const p of parts) { p.l -= dt; p.x += p.vx * dt; p.y += (p.vy || 0) * dt; p.z += p.vz * dt; p.vz -= 520 * dt; }
   parts = parts.filter(p => p.l > 0);
   for (const c of crates) if (c.broken && c.wreckT > 0) c.wreckT -= dt;
@@ -2515,7 +2790,7 @@ function stepGame(dt) {
   floaters = floaters.filter(f => f.t < 1);
   shake = Math.max(0, shake - dt * 20);
 
-  if (me && G.phase !== 'intro') {
+  if (me && G.phase !== 'intro' && !G.endScene) {
     const tgt = me.x - VW * .38 + me.face * 20;
     cam += (tgt - cam) * Math.min(1, dt * 6);
     cam = clamp(cam, 0, Math.max(0, WORLD - VW));
@@ -2534,7 +2809,7 @@ function updateHUD() {
   const f = me;
   if (!f) return;
   if (G.dropping && G.time >= G.dropUntil && f.z <= 0 && !allies.some(a => !a.dead && a.z > 0)) G.dropping = false;
-  setUiHidden(!!G.dropping);
+  setUiHidden(!!G.dropping || !!G.endScene);
 
   const tEl = $('#timer');
   if (tEl) {
@@ -2669,6 +2944,12 @@ function resize() {
 addEventListener('resize', resize);
 resize();
 
+// زر CONTINUE يُضاف أول نافذة GAME OVER
+const contBtn = document.createElement('button');
+contBtn.className = 'btn'; contBtn.type = 'button'; contBtn.id = 'rCont'; contBtn.textContent = 'CONTINUE'; contBtn.hidden = true;
+$('#rAgain').parentNode.insertBefore(contBtn, $('#rAgain'));
+$('#rAgain').classList.add('alt');
+contBtn.addEventListener('click', continueGame);
 $('#rAgain').addEventListener('click', playAgain);
 $('#rMenu').addEventListener('click', () => { window.location.href = 'home.html'; });
 const ICON_ON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 4V5L7 9H3z" fill="currentColor"/><path d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
