@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <title>Loading - Treasure Road</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lalezar&family=Tajawal:wght@400;500;700;800&display=swap">
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #3a3d3f; }
+    body { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; font-family: 'Tajawal', system-ui, sans-serif; }
+
+    #home { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; z-index: 0; background: #150f24; pointer-events: none; }
+    #gate { position: fixed; inset: 0; z-index: 10; overflow: hidden; background: #3a3d3f; will-change: transform; }
+    #gate.open { transform: translateY(-104%); transition: transform 2.6s cubic-bezier(.65,0,.35,1); box-shadow: 0 30px 40px rgba(0,0,0,.7); }
+    #stage { position: absolute; inset: 0; overflow: hidden; }
+    #stage.shake { animation: shake .38s cubic-bezier(.36,.07,.19,.97); }
+    @keyframes shake {
+      0%   { transform: translate(0,0); }
+      10%  { transform: translate(-14px, 9px) rotate(-.4deg); }
+      25%  { transform: translate(11px, -8px) rotate(.3deg); }
+      45%  { transform: translate(-7px, 5px); }
+      65%  { transform: translate(5px, -3px); }
+      100% { transform: translate(0,0); }
+    }
+    #stage.kick { animation: kick .12s ease-out; }
+    @keyframes kick { 0% { transform: translate(var(--kx,2px), var(--ky,2px)); } 100% { transform: translate(0,0); } }
+
+    canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+    #bg { z-index: 0; }
+    #holes { z-index: 5; pointer-events: none; }
+
+    #center {
+      position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: clamp(16px, 4vh, 36px); padding: 0 16px;
+    }
+    #logoWrap { position: relative; width: min(66vw, 520px); display: flex; justify-content: center; }
+    #logo {
+      display: block; max-width: 100%; max-height: 40vh; width: auto; height: auto; opacity: 0;
+      transform-origin: 50% 50%; will-change: transform, opacity;
+      filter: drop-shadow(0 10px 8px rgba(0,0,0,.55)) drop-shadow(0 2px 1px rgba(0,0,0,.6));
+    }
+    #logo.slam { animation: slam .16s cubic-bezier(.5,0,.9,.4) forwards; }
+    @keyframes slam {
+      0%   { opacity: 0; transform: scale(2.8) rotate(-1deg); filter: drop-shadow(0 60px 40px rgba(0,0,0,.2)); }
+      30%  { opacity: 1; }
+      100% { opacity: 1; transform: scale(1) rotate(var(--tilt, -7deg)); }
+    }
+    #logo.stuck { opacity: 1; transform: rotate(var(--tilt, -7deg)); animation: settle .35s ease-out; }
+    @keyframes settle {
+      0%   { transform: scale(1.045) rotate(calc(var(--tilt, -7deg) - 1.5deg)); }
+      40%  { transform: scale(.985) rotate(calc(var(--tilt, -7deg) + .6deg)); }
+      100% { transform: scale(1) rotate(var(--tilt, -7deg)); }
+    }
+    #logoText {
+      display: none; font-family: 'Lalezar', system-ui, sans-serif; font-size: clamp(40px, 11vw, 92px);
+      color: #ffc233; text-shadow: 0 4px 0 #000; text-align: center; opacity: 0; white-space: nowrap;
+    }
+
+    #dust { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+
+    /* Loading bar */
+    #loadWrap { margin-top: clamp(10px, 4vh, 40px); width: min(70vw, 460px); opacity: 0; transition: opacity .3s; }
+    #loadWrap.on { opacity: 1; }
+    #bar {
+      position: relative; height: 22px; background: #1b1c1d; border: 3px solid #000; border-radius: 3px;
+      box-shadow: 0 2px 0 rgba(255,255,255,.25), inset 0 3px 6px rgba(0,0,0,.8); overflow: hidden;
+    }
+    #fill {
+      height: 100%; width: 0%;
+      background: repeating-linear-gradient(-45deg, #ffc233 0 12px, #e0a21c 12px 24px);
+      box-shadow: inset 0 2px 0 rgba(255,255,255,.35), inset 0 -3px 0 rgba(0,0,0,.25);
+    }
+    #pct {
+      margin-top: 8px; text-align: center; font-family: 'Lalezar', system-ui, sans-serif; font-size: 30px; line-height: 1;
+      color: #151515; letter-spacing: .06em; text-shadow: 0 1px 0 rgba(255,255,255,.35);
+    }
+
+    #tap {
+      position: absolute; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center;
+      font-family: 'Lalezar', system-ui, sans-serif; font-size: clamp(26px, 6vw, 44px); letter-spacing: .08em;
+      color: #151515; text-shadow: 0 1px 0 rgba(255,255,255,.35); cursor: pointer; animation: blink 1.1s ease-in-out infinite;
+    }
+    @keyframes blink { 50% { opacity: .35; } }
+
+  </style>
+</head>
+<body>
+  <iframe id="home" title="home" tabindex="-1"></iframe>
+  <div id="gate">
+  <div id="stage">
+    <canvas id="bg"></canvas>
+
+    <div id="center">
+      <div id="logoWrap">
+        <img id="logo" src="images/logo.png" alt="Treasure Road" draggable="false">
+        <div id="logoText">TREASURE ROAD</div>
+      </div>
+      <div id="loadWrap">
+        <div id="bar"><div id="fill"></div></div>
+        <div id="pct">0%</div>
+      </div>
+    </div>
+
+    <canvas id="dust"></canvas>
+    <canvas id="holes"></canvas>
+    <div id="tap">TAP TO START</div>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    'use strict';
+
+    // ===== Settings =====
+    var NEXT_PAGE = 'home.html';
+    var HIT_DELAY = 1000;        // ms after the lose music starts -> logo gets slammed
+    var LOAD_TIME = 5500;        // ms for the bar to go 0 -> 100 (starts after the hit)
+    var SOUND = {
+      lose: 'sounds/lose_music.mp3',
+      hit:  'sounds/box_hit.mp3',
+      shoot:'sounds/shoot.mp3'
+    };
+
+    var $ = function (id) { return document.getElementById(id); };
+    var stage = $('stage'), bg = $('bg'), holes = $('holes'), dust = $('dust');
+    var logo = $('logo'), logoText = $('logoText'), logoWrap = $('logoWrap');
+    var fill = $('fill'), pct = $('pct'), loadWrap = $('loadWrap');
+    var DPR = Math.min(window.devicePixelRatio || 1, 2);
+    var W = 0, H = 0, started = false, done = false;
+    var logoReady = false;
+
+    function rnd(a, b) { return a + Math.random() * (b - a); }
+    function pick(a) { return a[(Math.random() * a.length) | 0]; }
+
+    // ===== Audio =====
+    function mk(src, vol) { var a = new Audio(src); a.preload = 'auto'; a.volume = vol; return a; }
+    var aLose = mk(SOUND.lose, 1), aHit = mk(SOUND.hit, 1), aShoot = mk(SOUND.shoot, .7);
+    function playClone(a) {
+      try { var c = a.cloneNode(); c.volume = a.volume; var p = c.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
+    }
+
+    // ===== Canvas sizing =====
+    function size(c) { c.width = Math.round(W * DPR); c.height = Math.round(H * DPR); }
+    function resize() {
+      W = window.innerWidth; H = window.innerHeight;
+      [bg, holes, dust].forEach(size);
+    }
+
+    // ===== Dirty war-torn aluminium =====
+    function paintAluminium() {
+      var c = bg.getContext('2d', { willReadFrequently: true }), w = bg.width, h = bg.height, s = DPR;
+      // base metal
+      var g = c.createLinearGradient(0, 0, w, h);
+      g.addColorStop(0, '#b4b9bc'); g.addColorStop(.35, '#a3a8ab'); g.addColorStop(.7, '#b0b5b8'); g.addColorStop(1, '#8d9295');
+      c.fillStyle = g; c.fillRect(0, 0, w, h);
+
+      // wide soft light bands (sheet-metal sheen)
+      for (var i = 0; i < 5; i++) {
+        var x = rnd(-.2, 1) * w, bw = rnd(.15, .4) * w;
+        var lg = c.createLinearGradient(x, 0, x + bw, 0);
+        lg.addColorStop(0, 'rgba(255,255,255,0)'); lg.addColorStop(.5, 'rgba(255,255,255,' + rnd(.06, .16) + ')'); lg.addColorStop(1, 'rgba(255,255,255,0)');
+        c.fillStyle = lg; c.fillRect(x, 0, bw, h);
+      }
+
+      // brushed grain: thousands of thin horizontal strokes
+      for (i = 0; i < 9000; i++) {
+        var y = Math.random() * h, x0 = Math.random() * w, len = rnd(30, 260) * s;
+        c.strokeStyle = Math.random() < .5 ? 'rgba(255,255,255,' + rnd(.03, .12) + ')' : 'rgba(0,0,0,' + rnd(.03, .1) + ')';
+        c.lineWidth = rnd(.4, 1.2) * s;
+        c.beginPath(); c.moveTo(x0, y); c.lineTo(x0 + len, y + rnd(-.6, .6)); c.stroke();
+      }
+
+      // pixel noise
+      var id = c.getImageData(0, 0, w, h), d = id.data;
+      for (i = 0; i < d.length; i += 4) {
+        var n = (Math.random() - .5) * 22;
+        d[i] += n; d[i + 1] += n; d[i + 2] += n;
+      }
+      c.putImageData(id, 0, 0);
+
+      // big grime blotches (dirt / oil / smoke)
+      for (i = 0; i < 38; i++) {
+        var cx = Math.random() * w, cy = Math.random() * h, r = rnd(40, 260) * s;
+        var col = pick(['40,32,24', '25,22,20', '70,50,30', '15,15,15', '90,70,45']);
+        var rg = c.createRadialGradient(cx, cy, 0, cx, cy, r);
+        rg.addColorStop(0, 'rgba(' + col + ',' + rnd(.12, .3) + ')'); rg.addColorStop(1, 'rgba(' + col + ',0)');
+        c.fillStyle = rg; c.fillRect(cx - r, cy - r, r * 2, r * 2);
+      }
+
+      // rust / grime drips running down
+      for (i = 0; i < 26; i++) {
+        var dx = Math.random() * w, dy = Math.random() * h * .8, dl = rnd(60, 340) * s, dw = rnd(2, 9) * s;
+        var dg = c.createLinearGradient(0, dy, 0, dy + dl);
+        var rc = pick(['120,62,25', '90,48,22', '45,36,28']);
+        dg.addColorStop(0, 'rgba(' + rc + ',0)'); dg.addColorStop(.15, 'rgba(' + rc + ',' + rnd(.25, .5) + ')'); dg.addColorStop(1, 'rgba(' + rc + ',0)');
+        c.fillStyle = dg; c.fillRect(dx, dy, dw, dl);
+      }
+
+      // rust patches (speckled)
+      for (i = 0; i < 14; i++) {
+        var px = Math.random() * w, py = Math.random() * h, pr = rnd(25, 90) * s;
+        for (var j = 0; j < 140; j++) {
+          var a = Math.random() * 6.283, rr = Math.random() * pr * Math.random();
+          c.fillStyle = 'rgba(' + pick(['130,64,24', '100,50,20', '150,80,30']) + ',' + rnd(.15, .5) + ')';
+          c.beginPath(); c.arc(px + Math.cos(a) * rr, py + Math.sin(a) * rr, rnd(.6, 3.2) * s, 0, 6.283); c.fill();
+        }
+      }
+
+      // scratches
+      for (i = 0; i < 110; i++) {
+        var sx = Math.random() * w, sy = Math.random() * h, sl = rnd(20, 220) * s, ang = rnd(-.9, .9) + (Math.random() < .5 ? 0 : 1.5);
+        c.strokeStyle = Math.random() < .6 ? 'rgba(25,22,20,' + rnd(.2, .5) + ')' : 'rgba(255,255,255,' + rnd(.25, .55) + ')';
+        c.lineWidth = rnd(.5, 1.6) * s;
+        c.beginPath(); c.moveTo(sx, sy);
+        c.quadraticCurveTo(sx + Math.cos(ang) * sl * .5 + rnd(-6, 6), sy + Math.sin(ang) * sl * .5 + rnd(-6, 6), sx + Math.cos(ang) * sl, sy + Math.sin(ang) * sl);
+        c.stroke();
+      }
+
+      // old dents (soft light/dark pairs)
+      for (i = 0; i < 10; i++) {
+        var qx = Math.random() * w, qy = Math.random() * h, qr = rnd(30, 90) * s;
+        var dg2 = c.createRadialGradient(qx - qr * .25, qy - qr * .25, qr * .1, qx, qy, qr);
+        dg2.addColorStop(0, 'rgba(0,0,0,.18)'); dg2.addColorStop(.7, 'rgba(255,255,255,.1)'); dg2.addColorStop(1, 'rgba(255,255,255,0)');
+        c.fillStyle = dg2; c.beginPath(); c.arc(qx, qy, qr, 0, 6.283); c.fill();
+      }
+
+      // scorch / soot marks (blast burns)
+      for (i = 0; i < 7; i++) {
+        var bx = Math.random() * w, by = Math.random() * h, br = rnd(70, 220) * s;
+        var bg2 = c.createRadialGradient(bx, by, 0, bx, by, br);
+        bg2.addColorStop(0, 'rgba(8,6,5,' + rnd(.35, .6) + ')'); bg2.addColorStop(.45, 'rgba(25,18,12,.22)'); bg2.addColorStop(1, 'rgba(0,0,0,0)');
+        c.save(); c.translate(bx, by); c.scale(rnd(.8, 1.6), 1); c.translate(-bx, -by);
+        c.fillStyle = bg2; c.fillRect(bx - br, by - br, br * 2, br * 2); c.restore();
+      }
+
+      // corner rivets / bolts
+      var rv = [[.03, .05], [.97, .05], [.03, .95], [.97, .95], [.5, .03], [.5, .97]];
+      rv.forEach(function (p) {
+        var rx = p[0] * w, ry = p[1] * h, rr = 7 * s;
+        var rg2 = c.createRadialGradient(rx - rr * .3, ry - rr * .3, rr * .1, rx, ry, rr);
+        rg2.addColorStop(0, '#d5d9db'); rg2.addColorStop(.6, '#7b8083'); rg2.addColorStop(1, '#3d4042');
+        c.fillStyle = 'rgba(0,0,0,.35)'; c.beginPath(); c.arc(rx + s, ry + 2 * s, rr, 0, 6.283); c.fill();
+        c.fillStyle = rg2; c.beginPath(); c.arc(rx, ry, rr, 0, 6.283); c.fill();
+      });
+
+      // heavy dark edges (smoke vignette)
+      var vg = c.createRadialGradient(w / 2, h / 2, Math.min(w, h) * .25, w / 2, h / 2, Math.max(w, h) * .78);
+      vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(10,8,6,.72)');
+      c.fillStyle = vg; c.fillRect(0, 0, w, h);
+    }
+
+    // ===== Bullet holes =====
+    function bulletHole(x, y, r) {
+      var c = holes.getContext('2d'), s = DPR;
+      x *= s; y *= s; r *= s;
+      c.save(); c.translate(x, y);
+
+      // soot halo
+      var halo = c.createRadialGradient(0, 0, r * .6, 0, 0, r * 3.2);
+      halo.addColorStop(0, 'rgba(10,8,6,.55)'); halo.addColorStop(1, 'rgba(10,8,6,0)');
+      c.fillStyle = halo; c.beginPath(); c.arc(0, 0, r * 3.2, 0, 6.283); c.fill();
+
+      // torn petals of metal around the hole
+      var petals = 6 + ((Math.random() * 4) | 0), a0 = Math.random() * 6.283;
+      for (var i = 0; i < petals; i++) {
+        var a = a0 + i * (6.283 / petals) + rnd(-.25, .25), len = r * rnd(1.5, 2.6);
+        c.fillStyle = 'rgba(210,214,216,.9)'; c.strokeStyle = 'rgba(30,30,30,.7)'; c.lineWidth = .8 * s;
+        c.beginPath();
+        c.moveTo(Math.cos(a - .22) * r, Math.sin(a - .22) * r);
+        c.lineTo(Math.cos(a) * len, Math.sin(a) * len);
+        c.lineTo(Math.cos(a + .22) * r, Math.sin(a + .22) * r);
+        c.closePath(); c.fill(); c.stroke();
+      }
+
+      // raised rim (light on top-left, shadow bottom-right)
+      var rim = c.createRadialGradient(-r * .3, -r * .3, r * .4, 0, 0, r * 1.45);
+      rim.addColorStop(0, '#6a6e70'); rim.addColorStop(.7, '#c9cdcf'); rim.addColorStop(1, '#2a2b2c');
+      c.fillStyle = rim; c.beginPath(); c.arc(0, 0, r * 1.4, 0, 6.283); c.fill();
+
+      // the hole itself
+      var hg = c.createRadialGradient(r * .15, r * .15, 0, 0, 0, r);
+      hg.addColorStop(0, '#000'); hg.addColorStop(.75, '#050505'); hg.addColorStop(1, '#1a1a1a');
+      c.fillStyle = hg; c.beginPath(); c.arc(0, 0, r, 0, 6.283); c.fill();
+
+      // tiny glint inside
+      c.fillStyle = 'rgba(255,255,255,.35)'; c.beginPath(); c.arc(-r * .35, -r * .35, r * .14, 0, 6.283); c.fill();
+
+      // hairline cracks
+      c.strokeStyle = 'rgba(20,20,20,.55)'; c.lineWidth = .7 * s;
+      for (i = 0; i < 4; i++) {
+        var ca = Math.random() * 6.283, cl = r * rnd(2, 3.6);
+        c.beginPath(); c.moveTo(Math.cos(ca) * r * 1.4, Math.sin(ca) * r * 1.4);
+        c.lineTo(Math.cos(ca + rnd(-.2, .2)) * cl, Math.sin(ca + rnd(-.2, .2)) * cl); c.stroke();
+      }
+      c.restore();
+    }
+
+    // random point near the (tilted) logo edge
+    function logoEdgePoint() {
+      var r = logo.getBoundingClientRect();
+      if (!r.width) return null;
+      var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      var tilt = (parseFloat(logo.style.getPropertyValue('--tilt')) || -7) * Math.PI / 180;
+      var hw = logo.offsetWidth / 2, hh = logo.offsetHeight / 2;
+      var t = Math.random() * 4, lx, ly;
+      if (t < 1)      { lx = rnd(-hw, hw); ly = -hh; }
+      else if (t < 2) { lx = hw;  ly = rnd(-hh, hh); }
+      else if (t < 3) { lx = rnd(-hw, hw); ly = hh; }
+      else            { lx = -hw; ly = rnd(-hh, hh); }
+      lx += rnd(-14, 14); ly += rnd(-14, 14);
+      return { x: cx + lx * Math.cos(tilt) - ly * Math.sin(tilt), y: cy + lx * Math.sin(tilt) + ly * Math.cos(tilt) };
+    }
+
+    // muzzle-like spark flash at the impact point
+    function flash(x, y) {
+      var c = dust.getContext('2d'), s = DPR; x *= s; y *= s;
+      var r = 46 * s, g = c.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, 'rgba(255,235,170,.95)'); g.addColorStop(.35, 'rgba(255,170,60,.5)'); g.addColorStop(1, 'rgba(255,120,0,0)');
+      c.globalCompositeOperation = 'lighter'; c.fillStyle = g; c.beginPath(); c.arc(x, y, r, 0, 6.283); c.fill();
+      c.globalCompositeOperation = 'source-over';
+      sparks(x, y, 7, 3);
+      setTimeout(function () { c.clearRect(x - r - 4, y - r - 4, r * 2 + 8, r * 2 + 8); }, 70);
+    }
+    function sparks(x, y, n, len) {
+      var c = dust.getContext('2d'), s = DPR;
+      c.strokeStyle = 'rgba(255,220,120,.9)'; c.lineWidth = 1.2 * s;
+      for (var i = 0; i < n; i++) {
+        var a = Math.random() * 6.283, l = rnd(10, 32) * s * len / 3;
+        c.beginPath(); c.moveTo(x, y); c.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); c.stroke();
+      }
+    }
+
+    function shoot() {
+      if (done) return;
+      var p;
+      if (Math.random() < .6 && (p = logoEdgePoint())) { /* near logo edge */ }
+      else p = { x: rnd(.04, .96) * W, y: rnd(.05, .95) * H };
+      playClone(aShoot);
+      flash(p.x, p.y);
+      bulletHole(p.x, p.y, rnd(4.5, 8.5));
+      // small camera kick
+      stage.style.setProperty('--kx', rnd(-3, 3) + 'px'); stage.style.setProperty('--ky', rnd(-3, 3) + 'px');
+      stage.classList.remove('kick'); void stage.offsetWidth; stage.classList.add('kick');
+    }
+
+    function shootingLoop() {
+      if (done) return;
+      var burst = Math.random() < .3 ? (2 + ((Math.random() * 3) | 0)) : 1;
+      for (var i = 0; i < burst; i++) setTimeout(shoot, i * rnd(70, 120));
+      setTimeout(shootingLoop, rnd(220, 520) + (burst > 1 ? 200 : 0));
+    }
+
+    // ===== Impact dust when the logo is slammed =====
+    function impactDust() {
+      var c = dust.getContext('2d'), s = DPR, r = logoWrap.getBoundingClientRect();
+      var cx = (r.left + r.width / 2) * s, cy = (r.top + r.height / 2) * s;
+      var parts = [];
+      for (var i = 0; i < 36; i++) {
+        var a = Math.random() * 6.283, v = rnd(2, 9) * s;
+        parts.push({ x: cx + rnd(-r.width * .4, r.width * .4) * s, y: cy + rnd(-40, 40) * s, vx: Math.cos(a) * v, vy: Math.sin(a) * v, r: rnd(6, 22) * s, life: 1 });
+      }
+      (function step() {
+        c.clearRect(0, 0, dust.width, dust.height);
+        var alive = false;
+        parts.forEach(function (p) {
+          p.x += p.vx; p.y += p.vy; p.vx *= .93; p.vy *= .93; p.r *= 1.025; p.life -= .035;
+          if (p.life > 0) {
+            alive = true;
+            c.fillStyle = 'rgba(70,62,54,' + (p.life * .32) + ')';
+            c.beginPath(); c.arc(p.x, p.y, p.r, 0, 6.283); c.fill();
+          }
+        });
+        if (alive) requestAnimationFrame(step); else c.clearRect(0, 0, dust.width, dust.height);
+      })();
+    }
+
+    // ===== Loading (bar width and % are driven by the same value) =====
+    function startLoading() {
+      loadWrap.classList.add('on');
+      var t0 = performance.now(), shown = -1;
+      // gentle stutters so it feels like real loading, but always monotonic
+      function curve(t) {
+        var e = t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        var v = .55 * t + .45 * e;
+        if (t > .38 && t < .5) v = Math.min(v, .38 * .55 + .45 * 2 * .38 * .38 + (t - .38) * .35);
+        return Math.min(v, 1);
+      }
+      var last = 0;
+      (function frame(now) {
+        var t = Math.min((now - t0) / LOAD_TIME, 1), v = Math.max(last, curve(t));
+        last = v;
+        var p = Math.floor(v * 100 + (t >= 1 ? 1e-6 : 0));
+        if (t >= 1) p = 100;
+        fill.style.width = (v * 100).toFixed(2) + '%';
+        if (p !== shown) { shown = p; pct.textContent = p + '%'; }
+        if (t < 1) requestAnimationFrame(frame); else finish();
+      })(t0);
+    }
+
+    function finish() {
+      if (done) return;
+      done = true;
+      setTimeout(function () {
+        // the whole splash lifts up slowly like a gate, revealing the home screen behind it
+        $('gate').classList.add('open');
+        var v = aLose.volume, steps = 26, i = 0;
+        var fd = setInterval(function () { i++; aLose.volume = Math.max(0, v * (1 - i / steps)); if (i >= steps) clearInterval(fd); }, 100);
+        setTimeout(function () { window.location.replace(NEXT_PAGE); }, 2750);
+      }, 450);
+    }
+
+    // ===== Sequence =====
+    function slamLogo() {
+      var tilt = (Math.random() < .5 ? -1 : 1) * rnd(5, 9);
+      logo.style.setProperty('--tilt', tilt + 'deg');
+      if (!logoReady) { logoText.style.display = 'block'; logoText.style.opacity = 1; logoText.style.transform = 'rotate(' + tilt + 'deg)'; logo.style.display = 'none'; }
+      logo.classList.add('slam');
+      // impact lands at the end of the slam animation (160ms)
+      setTimeout(function () {
+        playClone(aHit);
+        logo.classList.remove('slam'); logo.classList.add('stuck');
+        stage.classList.remove('kick'); stage.classList.add('shake');
+        impactDust();
+        setTimeout(function () { stage.classList.remove('shake'); }, 400);
+        setTimeout(function () { startLoading(); shootingLoop(); }, 500);
+      }, 160);
+    }
+
+    function begin() {
+      if (started) return; started = true;
+      $('tap').style.display = 'none';
+      $('home').src = NEXT_PAGE;
+      var p;
+      try { aLose.currentTime = 0; p = aLose.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
+      setTimeout(slamLogo, HIT_DELAY);
+    }
+
+    // Logo image check (fallback to text if missing)
+    logo.addEventListener('load', function () { logoReady = true; });
+    logo.addEventListener('error', function () { logoReady = false; });
+    if (logo.complete && logo.naturalWidth) logoReady = true;
+
+    // Draw the metal right away so there's never a black frame
+    resize(); paintAluminium();
+    window.addEventListener('resize', function () { if (!started) { resize(); paintAluminium(); } });
+
+    // Music + sequence always start from the first tap / key on "TAP TO START"
+    $('tap').style.display = 'flex';
+    var go = function () { document.removeEventListener('pointerdown', go); document.removeEventListener('keydown', go); begin(); };
+    document.addEventListener('pointerdown', go); document.addEventListener('keydown', go);
+  })();
+  </script>
+</body>
+</html>
