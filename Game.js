@@ -506,18 +506,35 @@ function playLater(s, ms, o) { setTimeout(() => { if (!G.paused) playSnd(s, o); 
 
 // أصوات الخلفية المتكررة (البحر، الريح، النار، محرك السيارة): كل واحد له مستوى يتغير بنعومة
 const AMB = {};
+// نسخة من الصوت تتكرر بدون أي قفزة: نهاية الملف تذوب في بدايته (1.5 ثانية)
+function seamlessLoop(buf) {
+  const sr = buf.sampleRate, xf = Math.min(Math.floor(sr * 1.5), Math.floor(buf.length / 3));
+  const n = buf.length - xf, out = AC.createBuffer(buf.numberOfChannels, n, sr);
+  for (let c = 0; c < buf.numberOfChannels; c++) {
+    const src = buf.getChannelData(c), dst = out.getChannelData(c);
+    dst.set(src.subarray(0, n));
+    for (let i = 0; i < xf; i++) {   // تلاشٍ متساوي القوة: بداية المقطع تظهر بينما نهايته تختفي
+      const t = i / xf;
+      dst[i] = src[i] * Math.sin(t * Math.PI / 2) + src[n + i] * Math.cos(t * Math.PI / 2);
+    }
+  }
+  return out;
+}
 function ambSet(key, v) {
   const s = SND[key]; let A = AMB[key];
   if (!A) A = AMB[key] = { g: null, src: null, el: null, v: 0 };
   v = muted || document.hidden ? 0 : Math.max(0, Math.min(1, v));
+  const webOK = !!(s.buf && AC && AC.state === 'running');
+  // كان يعمل مؤقتاً بعنصر Audio (قبل تحميل الملف): ننتقل إلى Web Audio فور جاهزيته لأنه يتكرر بدون انقطاع
+  if (webOK && A.el) { A.el.pause(); A.el = null; }
   if (Math.abs(v - A.v) < .01 && (v > 0) === !!(A.src || A.el)) return;
   A.v = v;
-  if (s.buf && AC && AC.state === 'running') {
+  if (webOK) {
     if (v > 0 && !A.src) {
       A.g = AC.createGain(); A.g.gain.value = 0; A.g.connect(sfxOut);
-      A.src = AC.createBufferSource(); A.src.buffer = s.buf; A.src.loop = true;
-      A.src.loopStart = .05; A.src.loopEnd = Math.max(.1, s.buf.duration - .05);   // تجاوز الصمت في بداية/نهاية ملف mp3
-      A.src.connect(A.g); A.src.start(0, .05);
+      if (!s.loopBuf) s.loopBuf = seamlessLoop(s.buf);
+      A.src = AC.createBufferSource(); A.src.buffer = s.loopBuf; A.src.loop = true;
+      A.src.connect(A.g); A.src.start();
     }
     if (A.g) A.g.gain.setTargetAtTime(v * s.vol, AC.currentTime, .35);
     if (v === 0 && A.src) { const src = A.src; A.src = null; try { src.stop(AC.currentTime + 1.2); } catch (e) {} A.g = null; }
@@ -531,9 +548,11 @@ function ambSet(key, v) {
 function updateAmbience() {
   const S = curStage(), ph = G.phase;
   const on = !G.paused && (ph === 'intro' || ph === 'count' || ph === 'play' || ph === 'trans');
-  // المرحلة 0 (السطح): البحر والريح
-  ambSet('sea', on && S.rooftop ? .32 : 0);
-  ambSet('wind', on && S.rooftop ? .22 : 0);
+  // المرحلة 0 (السطح) فقط: البحر والريح يعملان طوال المرحلة بدون توقف
+  // (لا يتأثران بزر الإيقاف ولا بنافذة GAME OVER؛ يتوقفان فقط عند كتم الصوت أو الخروج من التطبيق)
+  const roof = G.stage === 0 && !!S.rooftop && !G.endScene;
+  ambSet('sea', roof ? .32 : 0);
+  ambSet('wind', roof ? .22 : 0);
   // النار: أعلى كلما اقتربت الكاميرا من المدفأة/الشعلات
   let fv = 0;
   if (on && S.flames) {
