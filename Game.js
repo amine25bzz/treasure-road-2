@@ -262,7 +262,7 @@ function drawFlames(g, t) {
     glow.addColorStop(1, 'rgba(255,120,30,0)');
     g.fillStyle = glow; g.beginPath(); g.arc(x, y - h * .45, gr, 0, 6.3); g.fill();
     // ألسنة اللهب
-    const tongues = big ? 5 : 1;
+    const tongues = big ? (LOWQ ? 3 : 5) : 1;
     for (let j = 0; j < tongues; j++) {
       const off = big ? (j - (tongues - 1) / 2) / (tongues - 1) * w * .5 : 0;
       const nj = flameNoise(t * (1 + j * .13), i * 3 + j * 1.3);
@@ -294,31 +294,138 @@ fitWorld();
 IMG.bg.addEventListener('load', fitWorld);
 
 // ==========================================
+// الجودة: وضع منخفض تلقائي للهواتف الضعيفة
+// - يبدأ منخفضاً إذا كان الجهاز ضعيفاً (ذاكرة ≤ 3GB أو معالج ≤ 4 أنوية)
+// - ويتحول تلقائياً إلى منخفض إذا نزلت سرعة اللعبة عن 45 إطاراً في الثانية، ويتذكر ذلك للمرة القادمة
+// - للتجربة: game.html?q=low أو game.html?q=high
+// ==========================================
+const IS_TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+let LOWQ = (() => {
+  const q = new URLSearchParams(location.search).get('q');
+  if (q === 'low') return true;
+  if (q === 'high') return false;
+  try { if (localStorage.getItem('tr_quality') === 'low') return true; } catch (e) {}
+  const mem = navigator.deviceMemory || 8, cores = navigator.hardwareConcurrency || 8;
+  return mem <= 3 || cores <= 4;
+})();
+const QFORCED = /[?&]q=(low|high)/.test(location.search);
+function setLowQuality() {
+  if (LOWQ) return;
+  LOWQ = true; seaFx = null;
+  try { localStorage.setItem('tr_quality', 'low'); } catch (e) {}
+  resize();
+}
+// مراقبة السرعة أثناء اللعب
+const fpsMon = { t: 0, n: 0, bad: 0, warm: 0 };
+function watchFps(dt) {
+  // نقيس فقط أثناء اللعب الفعلي، ونتجاهل أول 4 ثوانٍ (تحميل الصور يبطئ اللعبة لحظياً في البداية)
+  if (LOWQ || QFORCED || G.paused || document.hidden || !(G.phase === 'play' || G.phase === 'ending')) { fpsMon.t = fpsMon.n = 0; fpsMon.warm = 0; return; }
+  if ((fpsMon.warm += dt) < 4) return;
+  fpsMon.t += dt; fpsMon.n++;
+  if (fpsMon.t >= 2) {
+    const fps = fpsMon.n / fpsMon.t; fpsMon.t = fpsMon.n = 0;
+    fpsMon.bad = fps < 42 ? fpsMon.bad + 1 : 0;
+    if (fpsMon.bad >= 3) setLowQuality();   // 6 ثوانٍ متتالية بطيئة
+  }
+}
+
+// ==========================================
 // SOUND MANAGEMENT
 // ==========================================
+// المؤثرات الصوتية بـ Web Audio: بدون تأخر على الهواتف، ويمكن تشغيل نفس الصوت عدة مرات في نفس الوقت.
+// الموسيقى الخلفية تبقى عنصر Audio عادي (ملف طويل يُشغَّل تدريجياً).
+// إذا لم يعمل Web Audio (مثلاً فتح اللعبة من ملف محلي) يرجع تلقائياً إلى Audio العادي.
+// المتصفح يمنع تشغيل الصوت قبل أول لمسة/ضغطة من اللاعب، لذلك ننشئ محرك الصوت بعد أول لمسة فقط.
+// الملفات تُحمَّل من البداية (بدون فك)، وتُفك مباشرة بعد أول لمسة.
+const AC_CLASS = window.AudioContext || window.webkitAudioContext;
+let AC = null, sfxOut = null;
+const sfxAll = [];
+function userActive() { const u = navigator.userActivation; return !u || u.hasBeenActive; }
+function unlockAudio() {
+  if (!AC_CLASS || location.protocol === 'file:' || !userActive()) return;
+  if (!AC) {
+    try { AC = new AC_CLASS(); sfxOut = AC.createGain(); sfxOut.connect(AC.destination); } catch (e) { AC = null; return; }
+    sfxAll.forEach(s => s.decode());
+  }
+  if (AC.state === 'suspended') AC.resume().catch(() => {});
+  // الموسيقى: إذا منعها المتصفح في البداية تبدأ مع أول لمسة
+  if (typeof SND !== 'undefined' && !muted && SND.bgm.paused && !G.paused && G.phase !== 'over') SND.bgm.play().catch(() => {});
+}
+['pointerup', 'touchend', 'keydown', 'click', 'mousedown'].forEach(ev => addEventListener(ev, unlockAudio, { capture: true, passive: true }));
+function mkSfx(url, opt) {
+  opt = opt || {};
+  const s = { url: url, buf: null, el: null, loop: !!opt.loop, vol: opt.vol == null ? 1 : opt.vol, src: null, last: 0, _paused: true };
+  const useEl = () => { if (!s.el) { s.el = new Audio(url); s.el.loop = s.loop; s.el.volume = s.vol; s.el.preload = 'auto'; } };
+  s.ab = null;
+  s.decode = function () {
+    if (!AC || !s.ab || s.buf || s.decoding) return;
+    s.decoding = true;
+    AC.decodeAudioData(s.ab.slice(0), b => { s.buf = b; }, () => useEl());
+  };
+  if (AC_CLASS && location.protocol !== 'file:') {
+    sfxAll.push(s);
+    fetch(url).then(r => r.ok ? r.arrayBuffer() : Promise.reject(r.status))
+      .then(ab => { s.ab = ab; s.decode(); }).catch(useEl);
+  } else useEl();
+  s.play = function () {
+    if (s.buf && AC) {
+      if (AC.state !== 'running') { unlockAudio(); if (AC.state !== 'running' && !s.loop) return Promise.resolve(); }
+      if (s.loop && !s._paused) return Promise.resolve();
+      const now = AC.currentTime;
+      if (!s.loop && now - s.last < .03) return Promise.resolve();   // نفس الصوت مرتين في نفس اللحظة = صوت مزعج
+      s.last = now;
+      const src = AC.createBufferSource(); src.buffer = s.buf; src.loop = s.loop;
+      const g = AC.createGain(); g.gain.value = s.vol;
+      src.connect(g); g.connect(sfxOut); src.start();
+      if (s.loop) { s.src = src; s._paused = false; src.onended = () => { if (s.src === src) { s.src = null; s._paused = true; } }; }
+      return Promise.resolve();
+    }
+    if (!userActive()) return Promise.resolve();   // قبل أول لمسة: المتصفح سيمنع الصوت على أي حال
+    useEl();
+    try { if (!s.loop) s.el.currentTime = 0; return s.el.play() || Promise.resolve(); } catch (e) { return Promise.resolve(); }
+  };
+  s.pause = function () {
+    if (s.src) { try { s.src.stop(); } catch (e) {} s.src = null; }
+    s._paused = true;
+    if (s.el) s.el.pause();
+  };
+  Object.defineProperty(s, 'paused', { get: () => s.el && !s.buf ? s.el.paused : s._paused });
+  Object.defineProperty(s, 'currentTime', { get: () => s.el ? s.el.currentTime : 0, set: v => { if (s.el) try { s.el.currentTime = v; } catch (e) {} } });
+  return s;
+}
 const SND = {
-    shoot: new Audio('sounds/shoot.mp3'),
-    hit: new Audio('sounds/enemy_hit.mp3'),
-    swing: new Audio('sounds/knife.mp3'),
-    boom: new Audio('sounds/booom.mp3'),
-    jump: new Audio('sounds/run.mp3'),
-    pick: new Audio('sounds/powerup_collect.mp3'),
-    win: new Audio('sounds/win_music.mp3'),
-    lose: new Audio('sounds/lose_music.mp3'),
+    shoot: mkSfx('sounds/shoot.mp3'),
+    hit: mkSfx('sounds/enemy_hit.mp3'),
+    swing: mkSfx('sounds/knife.mp3'),
+    boom: mkSfx('sounds/booom.mp3'),
+    jump: mkSfx('sounds/run.mp3'),
+    pick: mkSfx('sounds/powerup_collect.mp3'),
+    win: mkSfx('sounds/win_music.mp3'),
+    lose: mkSfx('sounds/lose_music.mp3'),
     bgm: new Audio('sounds/background_music.mp3'),
-    box_destroy: new Audio('sounds/box_destroy.mp3'),
-    health_refill: new Audio('sounds/health_refill.mp3'),
-    warning: new Audio('sounds/time_warning.mp3'),  // تنبيه آخر 10 ثوانٍ
-    glass: new Audio('sounds/Breaking_glass.mp3')    // تكسر النافذة
+    box_destroy: mkSfx('sounds/box_destroy.mp3'),
+    health_refill: mkSfx('sounds/health_refill.mp3'),
+    warning: mkSfx('sounds/time_warning.mp3', { loop: true }),  // تنبيه آخر 10 ثوانٍ (يتكرر حتى ينتهي الوقت)
+    glass: mkSfx('sounds/Breaking_glass.mp3')    // تكسر النافذة
 };
-SND.bgm.loop = true;
-SND.warning.loop = true;   // يتكرر حتى ينتهي الوقت
+SND.bgm.loop = true; SND.bgm.preload = 'auto';
 let muted = false;
 
 function playSnd(s) {
-    if (muted) return;
-    try { s.currentTime = 0; s.play().catch(()=>{}); } catch(e) {}
+    if (muted || !s) return;
+    try { s.play().catch(() => {}); } catch (e) {}
 }
+
+// عند خروج اللاعب من التطبيق/التبويب: نوقف كل الأصوات، وعند العودة نكمل الموسيقى
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    SND.bgm.pause(); SND.warning.pause();
+    if (AC && AC.state === 'running') AC.suspend().catch(() => {});
+  } else {
+    if (AC && userActive()) AC.resume().catch(() => {});
+    if (!muted && !G.paused && G.phase !== 'over') SND.bgm.play().catch(() => {});
+  }
+});
 
 // تنبيه الوقت: يعمل عندما يتبقى 10 ثوانٍ أو أقل ويتكرر حتى ينتهي الوقت
 function updateTimeWarning() {
@@ -1861,6 +1968,7 @@ function playerSpr(f) {
   const p = IMG.heroes[f.side];
   const hk = f.hk || 0;
   if (f.st === 'd') return f.dead ? ['death' + hk, p.death] : ['inj' + hk, p.injured];
+  if (G.paused) return ['idle', p.idle];   // عند الإيقاف المؤقت: البطل في وضع الوقوف
   if (f.st === 'h') return ['inj' + hk, p.injured];
   if (f.throwT > 0) return ['bomb' + (f.tk || 0), p.bomb];
   if (f.atkT >= 0 && (f.st === 'a' || f.st === 'j')) {
@@ -1885,6 +1993,7 @@ function playerSpr(f) {
 function enemySpr(e) {
   const p = IMG.enemies[e.spr || e.k];
   if (e.st === 'dead' || (e.st === 'down' && e.hp <= 0)) return ['death', p.death];
+  if (G.paused && e.st !== 'down') return ['idle', p.idle];   // عند الإيقاف المؤقت: كل الأعداء الأحياء في وضع الوقوف
   if (e.st === 'down' || e.st === 'hurt') return ['inj' + (e.hk || 0), p.injured];
   if (e.st === 'wind' || e.st === 'atk') return ['punch' + (e.ak || 0), p.punch];
   if (e.mv) return ['walk', p.walk];
@@ -2328,7 +2437,7 @@ const SEA_MASK = new Image(); SEA_MASK.src = 'images/backgrounds/sea-mask-stage0
 function buildSeaMask() {
   const S = curStage(), A = S.sea, k = bgScale(), img = IMG.bg;
   if (!A || !img || !img.complete || !img.naturalWidth) return null;
-  const R = 2;   // دقة القناع: بكسلان لكل وحدة عالم
+  const R = LOWQ ? 1 : 2;   // دقة القناع: بكسلان لكل وحدة عالم (واحد في الجودة المنخفضة)
   const x0 = A.x0 * k, y0 = A.top * k, w = (A.x1 - A.x0) * k, h = (A.bottom - A.top) * k;
   const cw = Math.round(w * R), ch = Math.round(h * R);
   const mask = document.createElement('canvas'); mask.width = cw; mask.height = ch;
@@ -2369,7 +2478,7 @@ function buildSeaMask() {
     mx.fillRect((B[0] - A.x0) * k * R, (B[2] - A.top) * k * R, (B[1] - B[0]) * k * R, (B[3] - B[2]) * k * R);
   }
   const fx = document.createElement('canvas'); fx.width = cw; fx.height = ch;
-  return { stage: G.stage, mask: mask, fx: fx, x0: x0, y0: y0, w: w, h: h, R: R, ok: ok };
+  return { stage: G.stage, mask: mask, fx: fx, x0: x0, y0: y0, w: w, h: h, R: R, ok: ok, low: LOWQ };
 }
 function drawSea(g, t) {
   if (!curStage().sea) return;
@@ -2379,13 +2488,16 @@ function drawSea(g, t) {
   const c = F.fx.getContext('2d'), R = F.R, W = F.fx.width, Hh = F.fx.height;
   c.globalCompositeOperation = 'source-over'; c.clearRect(0, 0, W, Hh);
   // أمواج شفافة ناعمة تتحرك مع نسيم خفيف: قمة فاتحة وظل خفيف تحتها
-  c.filter = 'blur(' + (.6 * R) + 'px)';
-  for (let i = 0; i < 18; i++) {
-    const k = i / 17, y = (6 + k * (F.h - 10)) * R + Math.sin(t * .6 + i * 1.3) * 1.5 * R;
+  // بدون filter:blur (ثقيل جداً على الهواتف): النعومة تأتي من خط عريض باهت تحت كل موجة
+  c.lineCap = 'round'; c.lineJoin = 'round';
+  const nW = LOWQ ? 10 : 18;
+  for (let i = 0; i < nW; i++) {
+    const k = i / (nW - 1), y = (6 + k * (F.h - 10)) * R + Math.sin(t * .6 + i * 1.3) * 1.5 * R;
     const amp = (.8 + k * 2.2) * R, fr = .035 - k * .018, sp = .7 + k * .4;
     const al = .22 + .14 * (.5 + .5 * Math.sin(t * .9 + i * 1.9));
-    for (const [col, dy, lw] of [['255,255,255', 0, (1 + k * 1.6) * R], ['0,45,95', (1.5 + k * 2) * R, (1.2 + k * 2) * R]]) {
-      c.strokeStyle = 'rgba(' + col + ',' + (col[0] === '0' ? al * .7 : al) + ')';
+    const layers = [['0,45,95', (1.5 + k * 2) * R, (1.2 + k * 2) * R, al * .7], ['255,255,255', 0, (1 + k * 1.6) * R * 2.6, al * .3], ['255,255,255', 0, (1 + k * 1.6) * R * .8, al]];
+    for (const [col, dy, lw, aa] of layers) {
+      c.strokeStyle = 'rgba(' + col + ',' + aa + ')';
       c.lineWidth = lw; c.beginPath();
       for (let x = -20; x <= W + 20; x += 8 * R) {
         const yy = y + dy + Math.sin((x / R + F.x0) * fr + t * sp + i * 2.1) * amp;
@@ -2394,9 +2506,8 @@ function drawSea(g, t) {
       c.stroke();
     }
   }
-  c.filter = 'none';
   // لمعات خفيفة جدا تنجرف ببطء
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < (LOWQ ? 25 : 60); i++) {
     const k = ((i * 37) % 100) / 100;
     const gx = (((i * 113.7) + t * (6 + k * 8)) % (F.w + 40)) - 20, gy = 4 + k * (F.h - 8);
     const a = .35 * Math.sin(t * 1.6 + i * 2.3);
@@ -2426,6 +2537,7 @@ function drawWater(g, t) {
   drawRipples(g);
 }
 function drawWaterRect(g, t, L, nLines, nGlints) {
+  if (LOWQ) { nLines = Math.ceil(nLines / 2); nGlints = Math.ceil(nGlints / 2); }
   const x0 = L.x0 - cam, x1 = L.x1 - cam;
   if (x1 < -20 || x0 > VW + 20) return;
   g.save();
@@ -2874,7 +2986,7 @@ function stepEnding(dt) {
       for (let i = 0; i < 3; i++) parts.push({ x: wx + rr(-10, 4), y: C.y, z: 2, vx: rr(-140, 30), vz: rr(90, 230), l: rr(.3, .6), c: i % 2 ? '#d8f6ff' : '#8fd8ea' });
       continue;
     }
-    if (Math.random() < .8) endDust.push({ x: C.x - C.w / 2 + (wh.x - 70) * C.k, y: C.y + rr(-3, 3), z: rr(0, 6), vx: ENDING.camSpeed * rr(.05, .35), vz: rr(8, 30), r: rr(5, 9), gr: rr(22, 40), l: rr(.9, 1.6), t: 0 });
+    if (Math.random() < (LOWQ ? .35 : .8)) endDust.push({ x: C.x - C.w / 2 + (wh.x - 70) * C.k, y: C.y + rr(-3, 3), z: rr(0, 6), vx: ENDING.camSpeed * rr(.05, .35), vz: rr(8, 30), r: rr(5, 9), gr: rr(22, 40), l: rr(.9, 1.6), t: 0 });
   }
   // العدّاءان يغيّران سرعتهما: مرة خلف السيارة ومرة بجانبها
   for (const r of (arrived ? [] : endRunners)) {
@@ -3033,6 +3145,7 @@ function stepGame(dt) {
   updateRocks(dt);
   for (const p of parts) { p.l -= dt; p.x += p.vx * dt; p.y += (p.vy || 0) * dt; p.z += p.vz * dt; p.vz -= 520 * dt; }
   parts = parts.filter(p => p.l > 0);
+  if (LOWQ && parts.length > 90) parts.splice(0, parts.length - 90);   // وضع الجودة المنخفضة: جزيئات أقل
   for (const c of crates) if (c.broken && c.wreckT > 0) c.wreckT -= dt;
   for (const b of barrels) if (b.exploded && b.wreckT > 0) b.wreckT -= dt;
   for (const e of explosions) e.t += dt;
@@ -3178,6 +3291,7 @@ bindBtn($('#bAtk'), 'atk'); bindBtn($('#bJump'), 'jmp'); bindBtn($('#bSwitch'), 
 function checkTouch() {
   const t = ('ontouchstart' in window) || navigator.maxTouchPoints > 0 || matchMedia('(pointer:coarse)').matches || innerWidth <= 820;
   document.body.classList.toggle('touch', !!t);
+  document.body.classList.toggle('phone', IS_TOUCH);
 }
 function resize() {
   checkTouch();
@@ -3187,13 +3301,33 @@ function resize() {
   VW = Math.round(H * ratio);
   const w = Math.min(aw, ah * ratio), h = w / ratio;
   frame.style.width = w + 'px'; frame.style.height = h + 'px'; frame.style.aspectRatio = 'auto';
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const dpr = Math.min(LOWQ ? 1 : (IS_TOUCH ? 1.5 : 2), window.devicePixelRatio || 1);   // الهواتف: دقة أقل = سرعة أعلى
   cv.width = Math.max(2, Math.round(w * dpr)); cv.height = Math.max(2, Math.round(h * dpr));
   SC = cv.width / VW;
   CS = w / VW;
 }
 addEventListener('resize', resize);
 resize();
+
+// الهاتف: اللعبة أفقية. عند أول لمسة نحاول ملء الشاشة وقفلها على الوضع الأفقي (يعمل على أندرويد)،
+// وإذا كان الهاتف عمودياً تظهر رسالة "أدر الهاتف"
+const rotHint = document.createElement('div');
+rotHint.id = 'rotHint';
+rotHint.innerHTML = '<div class="rot-ic"></div><b>ROTATE YOUR PHONE</b><span>أدر الهاتف للعب</span>';
+document.body.appendChild(rotHint);
+function lockLandscape() {
+  if (!IS_TOUCH) return;
+  const de = document.documentElement, o = screen.orientation;
+  const lock = () => { if (o && o.lock) o.lock('landscape').catch(() => {}); };
+  if (!userActive()) return;
+  removeEventListener('pointerup', lockLandscape, true); removeEventListener('touchend', lockLandscape, true);
+  if (!document.fullscreenElement && de.requestFullscreen) de.requestFullscreen({ navigationUI: 'hide' }).then(lock).catch(lock);
+  else lock();
+}
+// ملء الشاشة مسموح فقط عند رفع الإصبع (وليس عند لمسه)
+addEventListener('pointerup', lockLandscape, true);
+addEventListener('touchend', lockLandscape, true);
+addEventListener('orientationchange', () => setTimeout(resize, 250));
 
 // زر CONTINUE يُضاف أول نافذة GAME OVER
 const contBtn = document.createElement('button');
@@ -3216,6 +3350,7 @@ $('#mute').addEventListener('click', () => {
   muted = !muted;
   paintMute();
   SND.bgm.muted = muted;
+  if (muted) SND.warning.pause();
 });
 
 const ICON_PAUSE = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor"/><rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor"/></svg>';
@@ -3235,9 +3370,10 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) setPa
 
 let last = performance.now(), T0 = last;
 function loop(now) {
-  const dt = Math.min(.05, (now - last) / 1000);
+  const rawDt = (now - last) / 1000, dt = Math.min(.05, rawDt);
   last = now; G.t = (now - T0) / 1000;
   try {
+    if (rawDt > 0 && rawDt < .5) watchFps(rawDt);
     if (!G.paused) stepGame(dt);
     render(G.t);
     applyZoom();

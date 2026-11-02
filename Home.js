@@ -113,7 +113,26 @@ function renderStore() {
       '</div></div>';
   }).join('');
 }
-function snd() { try { const a = new Audio('sounds/powerup_collect.mp3'); a.play().catch(() => {}); } catch (e) {} }
+// صوت النقر بـ Web Audio (بدون تأخر على الهواتف)، مع رجوع إلى Audio العادي عند الحاجة
+let sndAC = null, sndBuf = null, sndAB = null;
+if (location.protocol !== 'file:') fetch('sounds/powerup_collect.mp3').then(r => r.arrayBuffer()).then(ab => { sndAB = ab; }).catch(() => {});
+// محرك الصوت يُنشأ مع أول ضغطة فقط (المتصفح يمنعه قبل ذلك)
+function sndInit() {
+  if (sndAC || !sndAB) return;
+  try { const C = window.AudioContext || window.webkitAudioContext; if (!C) return; sndAC = new C(); } catch (e) { return; }
+  sndAC.decodeAudioData(sndAB.slice(0), b => { sndBuf = b; }, () => {});
+}
+['pointerup', 'touchend', 'keydown', 'mousedown'].forEach(ev => addEventListener(ev, sndInit, { capture: true, passive: true }));
+function snd() {
+  try {
+    if (sndAC && sndBuf) {
+      if (sndAC.state === 'suspended') sndAC.resume().catch(() => {});
+      const s = sndAC.createBufferSource(); s.buffer = sndBuf; s.connect(sndAC.destination); s.start();
+      return;
+    }
+    const a = new Audio('sounds/powerup_collect.mp3'); a.play().catch(() => {});
+  } catch (e) {}
+}
 function buy(id) {
   const it = ITEMS.find(i => i.id === id);
   if (!it || (it.perm && S.owned[id])) return;
