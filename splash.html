@@ -1,10 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<!-- رقم الإصدار ?v=1: عند كل تحديث للعبة على موقع، غيّر الرقم في الصفحات الثلاث (game.html و home.html و splash.html) إلى 2 ثم 3... حتى يحمّل المتصفح الملفات الجديدة -->
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
   <title>Loading - Treasure Road</title>
-  <link rel="stylesheet" href="fonts/fonts.css">
+  <link rel="stylesheet" href="fonts/fonts.css?v=1">
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #3a3d3f; }
     body { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; font-family: 'Tajawal', system-ui, sans-serif; }
@@ -117,8 +118,8 @@
     var LOAD_TIME = 5500;        // ms for the bar to go 0 -> 100 (starts after the hit)
     var SOUND = {
       lose: 'sounds/lose_music.mp3',
-      hit:  'sounds/box_hit.mp3',
-      shoot:'sounds/shoot.mp3'
+      hit:  'sounds-new/1-combat/iron_ball_hit.mp3',
+      shoot:'sounds-new/1-combat/gunshot.mp3'
     };
 
     var $ = function (id) { return document.getElementById(id); };
@@ -135,7 +136,34 @@
     // ===== Audio =====
     function mk(src, vol) { var a = new Audio(src); a.preload = 'auto'; a.volume = vol; return a; }
     var aLose = mk(SOUND.lose, 1), aHit = mk(SOUND.hit, 1), aShoot = mk(SOUND.shoot, .7);
+    // الطلقات والضربة بـ Web Audio (بدون تأخر وبدون تقطع عند تكرارها بسرعة على الهواتف).
+    // الملفات تُحمَّل الآن، ومحرك الصوت يُنشأ عند أول لمسة فقط (المتصفح يمنعه قبل ذلك).
+    var AC = null, raw = {}, bufs = {};
+    if (location.protocol !== 'file:' && window.fetch) {
+      [['hit', SOUND.hit], ['shoot', SOUND.shoot]].forEach(function (k) {
+        fetch(k[1]).then(function (r) { return r.ok ? r.arrayBuffer() : null; }).then(function (ab) { if (ab) { raw[k[0]] = ab; decode(k[0]); } }).catch(function () {});
+      });
+    }
+    function decode(k) {
+      if (!AC || !raw[k] || bufs[k]) return;
+      var ab = raw[k]; raw[k] = null;
+      AC.decodeAudioData(ab, function (b) { bufs[k] = b; }, function () {});
+    }
+    function initAudio() {
+      if (AC) return;
+      try { var C = window.AudioContext || window.webkitAudioContext; if (C) AC = new C(); } catch (e) { AC = null; }
+      if (AC) { decode('hit'); decode('shoot'); }
+    }
     function playClone(a) {
+      var k = a === aHit ? 'hit' : (a === aShoot ? 'shoot' : null);
+      if (AC && k && bufs[k]) {
+        try {
+          if (AC.state === 'suspended') AC.resume();
+          var src = AC.createBufferSource(), g = AC.createGain();
+          src.buffer = bufs[k]; g.gain.value = a.volume; src.connect(g); g.connect(AC.destination); src.start();
+          return;
+        } catch (e) {}
+      }
       try { var c = a.cloneNode(); c.volume = a.volume; var p = c.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
     }
 
@@ -428,6 +456,7 @@
 
     function begin() {
       if (started) return; started = true;
+      initAudio();
       $('tap').style.display = 'none';
       $('home').src = NEXT_PAGE;
       var p;
@@ -446,8 +475,9 @@
 
     // Music + sequence always start from the first tap / key on "TAP TO START"
     $('tap').style.display = 'flex';
-    var go = function () { document.removeEventListener('pointerdown', go); document.removeEventListener('keydown', go); begin(); };
-    document.addEventListener('pointerdown', go); document.addEventListener('keydown', go);
+    // نبدأ عند رفع الإصبع (pointerup): على الهواتف المتصفح لا يسمح بتشغيل الصوت عند لمس الشاشة فقط
+    var go = function () { document.removeEventListener('pointerup', go); document.removeEventListener('keydown', go); begin(); };
+    document.addEventListener('pointerup', go); document.addEventListener('keydown', go);
   })();
   </script>
 </body>

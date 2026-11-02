@@ -367,22 +367,34 @@ function mkSfx(url, opt) {
     fetch(url).then(r => r.ok ? r.arrayBuffer() : Promise.reject(r.status))
       .then(ab => { s.ab = ab; s.decode(); }).catch(useEl);
   } else useEl();
-  s.play = function () {
+  // play(o): o.vol = مستوى الصوت (يُضرب في الافتراضي)، o.rate = سرعة/حدة (تنويع خفيف حتى لا يتكرر نفس الصوت بالضبط)
+  // يرجع مقبضاً فيه stop() لإيقاف الصوت قبل نهايته (مثل خطوات الديناصور عند انتهاء الاندفاع)
+  s.play = function (o) {
+    o = o || {};
     if (s.buf && AC) {
-      if (AC.state !== 'running') { unlockAudio(); if (AC.state !== 'running' && !s.loop) return Promise.resolve(); }
-      if (s.loop && !s._paused) return Promise.resolve();
+      if (AC.state !== 'running') { unlockAudio(); if (AC.state !== 'running' && !s.loop) return NOH; }
+      if (s.loop && !s._paused) return NOH;
       const now = AC.currentTime;
-      if (!s.loop && now - s.last < .03) return Promise.resolve();   // نفس الصوت مرتين في نفس اللحظة = صوت مزعج
+      if (!s.loop && !o.force && now - s.last < .03) return NOH;   // نفس الصوت مرتين في نفس اللحظة = صوت مزعج
       s.last = now;
       const src = AC.createBufferSource(); src.buffer = s.buf; src.loop = s.loop;
-      const g = AC.createGain(); g.gain.value = s.vol;
+      if (o.rate) src.playbackRate.value = o.rate;
+      const g = AC.createGain(); g.gain.value = s.vol * (o.vol == null ? 1 : o.vol);
       src.connect(g); g.connect(sfxOut); src.start();
       if (s.loop) { s.src = src; s._paused = false; src.onended = () => { if (s.src === src) { s.src = null; s._paused = true; } }; }
-      return Promise.resolve();
+      const h = { done: false, catch() { return h; }, then() { return h; }, stop: (fade) => { if (h.done) return; h.done = true; try { const tt = AC.currentTime; g.gain.setTargetAtTime(0, tt, (fade || .06) / 3); src.stop(tt + (fade || .06)); } catch (e) {} } };
+      src.addEventListener('ended', () => { h.done = true; });
+      return h;
     }
-    if (!userActive()) return Promise.resolve();   // قبل أول لمسة: المتصفح سيمنع الصوت على أي حال
+    if (!userActive()) return NOH;   // قبل أول لمسة: المتصفح سيمنع الصوت على أي حال
     useEl();
-    try { if (!s.loop) s.el.currentTime = 0; return s.el.play() || Promise.resolve(); } catch (e) { return Promise.resolve(); }
+    try {
+      const el = s.loop ? s.el : s.el.cloneNode();
+      el.volume = Math.min(1, s.vol * (o.vol == null ? 1 : o.vol));
+      if (!s.loop) el.currentTime = 0;
+      const p = el.play(); if (p && p.catch) p.catch(() => {});
+      return { done: false, catch() { return this; }, then() { return this; }, stop: () => { try { el.pause(); } catch (e) {} } };
+    } catch (e) { return NOH; }
   };
   s.pause = function () {
     if (s.src) { try { s.src.stop(); } catch (e) {} s.src = null; }
@@ -393,27 +405,144 @@ function mkSfx(url, opt) {
   Object.defineProperty(s, 'currentTime', { get: () => s.el ? s.el.currentTime : 0, set: v => { if (s.el) try { s.el.currentTime = v; } catch (e) {} } });
   return s;
 }
+const NOH = { done: true, stop() {}, catch() { return this; }, then() { return this; } };   // مقبض فارغ عندما لا يُشغَّل الصوت
+
+// ==========================================
+// كل أصوات اللعبة من مجلد sounds-new (الاسم = اسم الملف، والرقم = مستوى الصوت الافتراضي)
+// الموسيقى الخلفية فقط من مجلد sounds
+// ==========================================
+const SN = 'sounds-new/';
+const sfx = (f, vol, loop) => mkSfx(SN + f + '.mp3', { vol: vol, loop: loop });
 const SND = {
-    shoot: mkSfx('sounds/shoot.mp3'),
-    hit: mkSfx('sounds/enemy_hit.mp3'),
-    swing: mkSfx('sounds/knife.mp3'),
-    boom: mkSfx('sounds/booom.mp3'),
-    jump: mkSfx('sounds/run.mp3'),
-    pick: mkSfx('sounds/powerup_collect.mp3'),
-    win: mkSfx('sounds/win_music.mp3'),
-    lose: mkSfx('sounds/lose_music.mp3'),
-    bgm: new Audio('sounds/background_music.mp3'),
-    box_destroy: mkSfx('sounds/box_destroy.mp3'),
-    health_refill: mkSfx('sounds/health_refill.mp3'),
-    warning: mkSfx('sounds/time_warning.mp3', { loop: true }),  // تنبيه آخر 10 ثوانٍ (يتكرر حتى ينتهي الوقت)
-    glass: mkSfx('sounds/Breaking_glass.mp3')    // تكسر النافذة
+  // القتال
+  punch: sfx('1-combat/punch', .9), kick: sfx('1-combat/kick', 1), body_hit: sfx('1-combat/body_hit', .75),
+  knife_swoosh: sfx('1-combat/knife_swoosh', .55), knife_slash: sfx('1-combat/knife_slash', .85), knife_throw: sfx('1-combat/knife_throw', .7), knife_stab: sfx('1-combat/knife_stab', .85),
+  gunshot: sfx('1-combat/gunshot', .7), machinegun: sfx('1-combat/machinegun', .65), enemy_pistol: sfx('1-combat/enemy_pistol', .55), reload: sfx('1-combat/reload', .8),
+  bomb_throw: sfx('1-combat/bomb_throw', .7), bomb_clank: sfx('1-combat/bomb_clank', .6), explosion: sfx('1-combat/explosion', 1), explosion_small: sfx('1-combat/explosion_small', .9),
+  mine_beep: sfx('1-combat/mine_beep', .6), ball_swing: sfx('1-combat/iron_ball_swing', .8), ball_hit: sfx('1-combat/iron_ball_hit', .95),
+  // الحركة
+  footstep: sfx('2-movement/footstep', .32), running: sfx('2-movement/running', .45), jump: sfx('2-movement/jump', .6), land: sfx('2-movement/land', .55), bodyfall: sfx('2-movement/bodyfall', .7),
+  dino_stomp: sfx('2-movement/dino_stomp', .9), dino_steps: sfx('2-movement/dino_steps', .8),
+  // التكسير
+  glass: sfx('3-destruction/glass_shatter', 1), wall_break: sfx('3-destruction/wall_break', .9), wood_break: sfx('3-destruction/wood_break', .85), wood_hit: sfx('3-destruction/wood_hit', .7),
+  barrel_hit: sfx('3-destruction/barrel_hit', .6), door_break: sfx('3-destruction/door_break', 1), stone_door: sfx('3-destruction/stone_door_explode', 1),
+  // الماء والطبيعة
+  water_step: sfx('4-water-nature/water_step', .45), water_splash: sfx('4-water-nature/water_splash', .7), water_jump: sfx('4-water-nature/water_jump_in', .85),
+  sea: sfx('4-water-nature/sea_loop', 1, true), wind: sfx('4-water-nature/wind_loop', 1, true), fire: sfx('4-water-nature/fire_loop', 1, true),
+  // الأغراض والقائمة
+  pickup: sfx('5-items-ui/pickup', .8), coin: sfx('5-items-ui/coin', .8), heal: sfx('5-items-ui/heal', .8), powerup: sfx('5-items-ui/powerup', .8), life_up: sfx('5-items-ui/life_up', .85),
+  click: sfx('5-items-ui/click', .8), menu_select: sfx('5-items-ui/menu_select', .8),
+  warning: sfx('5-items-ui/time_alarm', .7, true),   // تنبيه آخر 10 ثوانٍ (يتكرر حتى ينتهي الوقت)
+  // السيارة
+  engine: sfx('6-vehicle/car_engine_loop', 1, true), brake: sfx('6-vehicle/car_brake', .8),
+  // الوحوش
+  dino_roar: sfx('7-creatures/dino_roar', .85), growl: sfx('7-creatures/monster_growl', .85),
+  // نغمات
+  win: sfx('8-jingles/victory_jingle', .9), lose: sfx('8-jingles/gameover_jingle', .9), stage_clear: sfx('8-jingles/stage_clear', .85),
+  // الموسيقى: مدير يختار المقطع حسب المرحلة (انظر BGM أدناه)
+  bgm: null
 };
-SND.bgm.loop = true; SND.bgm.preload = 'auto';
+// أسماء قديمة ما زالت مستعملة في الكود
+SND.hit = SND.body_hit; SND.swing = SND.knife_swoosh; SND.boom = SND.explosion; SND.shoot = SND.gunshot;
+SND.pick = SND.pickup; SND.box_destroy = SND.wood_break; SND.health_refill = SND.heal;
+// ==========================================
+// موسيقى الخلفية: مقطع لكل مرحلة من sounds-new/9-background
+//  - المرحلة 0 (السطح): بدون موسيقى (المشهد السينمائي + البحر + الريح فقط)
+//  - المراحل 1 → 4: background_music_stage1 → stage4
+//  - المشهد الأخير (السيارة): background_music_stage5_final
+// يحافظ على نفس الاستعمال القديم: SND.bgm.play() / pause() / volume / muted / paused
+// وعند تغيّر المرحلة ينتقل للمقطع الجديد بتلاشٍ ناعم
+// ==========================================
+const BGM_DIR = SN + '9-background/background_music_';
+// ===== مستوى الموسيقى =====
+// MUSIC_LEVEL: مستوى الموسيقى العام (1 = عادي، 0.5 = أخفض بالنصف، 1.5 = أعلى)
+const MUSIC_LEVEL = 1;
+// مستوى كل مقطع حتى تكون كلها بنفس الارتفاع وأخفض من المؤثرات (محسوب من قياس ارتفاع كل ملف)
+// إذا غيّرت ملف موسيقى وكان أعلى/أخفض من غيره، غيّر رقمه هنا
+const MUSIC_GAIN = { stage1: .19, stage2: .11, stage3: .45, stage4: .18, stage5_final: .22 };
+function bgmTrack() {
+  if (G.endScene) return 'stage5_final';
+  const n = G.stage;
+  if (!n || curStage().rooftop) return null;   // المرحلة 0: بدون موسيقى
+  return 'stage' + Math.min(4, n);
+}
+const BGM = {
+  want: false, vol: .5, cur: null, els: {},
+  el(name) { let a = this.els[name]; if (!a) { a = this.els[name] = new Audio(BGM_DIR + name + '.mp3'); a.loop = true; a.preload = 'auto'; a.volume = 0; a._v = 0; } return a; },
+  play() { this.want = true; this.sync(0); return Promise.resolve(); },
+  pause() { this.want = false; this.sync(0, true); },
+  get paused() { return !this.want; },
+  set volume(v) { this.vol = v; }, get volume() { return this.vol; },
+  set muted(v) { this.sync(0, true); }, get muted() { return muted; },
+  set loop(v) {}, set preload(v) {},
+  // كل إطار: يشغّل المقطع المطلوب ويخفت الباقي
+  sync(dt, now) {
+    const name = this.want && !muted && !G.paused && !document.hidden && userActive() ? bgmTrack() : null;
+    if (name && name !== this.cur) this.el(name);
+    this.cur = name;
+    for (const k in this.els) {
+      const a = this.els[k], target = k === name ? Math.min(1, (MUSIC_GAIN[k] || .2) * MUSIC_LEVEL) : 0;
+      const step = now ? 1 : Math.min(1, dt * .8);   // تلاشٍ خلال ثانية تقريباً
+      a._v += (target - a._v) * (target > a._v ? step : Math.min(1, step * 2));
+      if (target === 0 && a._v < .01) a._v = 0;
+      try { a.volume = Math.max(0, Math.min(1, a._v)); } catch (e) {}
+      if (a._v > 0 || target > 0) { if (a.paused) { const p = a.play(); if (p && p.catch) p.catch(() => {}); } }
+      else if (!a.paused) a.pause();
+    }
+  }
+};
+SND.bgm = BGM;
 let muted = false;
 
-function playSnd(s) {
-    if (muted || !s) return;
-    try { s.play().catch(() => {}); } catch (e) {}
+// تشغيل صوت: o = { vol, rate, vary } ؛ vary = تنويع عشوائي خفيف في الحدة
+function playSnd(s, o) {
+  if (muted || !s) return NOH;
+  o = o || {};
+  if (o.vary) o.rate = (o.rate || 1) * (1 + (Math.random() - .5) * o.vary);
+  try { return s.play(o) || NOH; } catch (e) { return NOH; }
+}
+// صوت بعد تأخير قصير (مثل سقوط الجسم بعد الموت)
+function playLater(s, ms, o) { setTimeout(() => { if (!G.paused) playSnd(s, o); }, ms); }
+
+// أصوات الخلفية المتكررة (البحر، الريح، النار، محرك السيارة): كل واحد له مستوى يتغير بنعومة
+const AMB = {};
+function ambSet(key, v) {
+  const s = SND[key]; let A = AMB[key];
+  if (!A) A = AMB[key] = { g: null, src: null, el: null, v: 0 };
+  v = muted || document.hidden ? 0 : Math.max(0, Math.min(1, v));
+  if (Math.abs(v - A.v) < .01 && (v > 0) === !!(A.src || A.el)) return;
+  A.v = v;
+  if (s.buf && AC && AC.state === 'running') {
+    if (v > 0 && !A.src) {
+      A.g = AC.createGain(); A.g.gain.value = 0; A.g.connect(sfxOut);
+      A.src = AC.createBufferSource(); A.src.buffer = s.buf; A.src.loop = true;
+      A.src.loopStart = .05; A.src.loopEnd = Math.max(.1, s.buf.duration - .05);   // تجاوز الصمت في بداية/نهاية ملف mp3
+      A.src.connect(A.g); A.src.start(0, .05);
+    }
+    if (A.g) A.g.gain.setTargetAtTime(v * s.vol, AC.currentTime, .35);
+    if (v === 0 && A.src) { const src = A.src; A.src = null; try { src.stop(AC.currentTime + 1.2); } catch (e) {} A.g = null; }
+  } else if (!s.buf && userActive()) {
+    if (!A.el) { A.el = new Audio(s.url); A.el.loop = true; }
+    A.el.volume = v * s.vol;
+    if (v > 0 && A.el.paused) A.el.play().catch(() => {});
+    if (v === 0) A.el.pause();
+  }
+}
+function updateAmbience() {
+  const S = curStage(), ph = G.phase;
+  const on = !G.paused && (ph === 'intro' || ph === 'count' || ph === 'play' || ph === 'trans');
+  // المرحلة 0 (السطح): البحر والريح
+  ambSet('sea', on && S.rooftop ? .32 : 0);
+  ambSet('wind', on && S.rooftop ? .22 : 0);
+  // النار: أعلى كلما اقتربت الكاميرا من المدفأة/الشعلات
+  let fv = 0;
+  if (on && S.flames) {
+    const k = bgScale(), mid = cam + VW / 2;
+    for (const f of S.flames) { const d = Math.abs(f.x * k - mid); fv = Math.max(fv, (f.kind === 'fire' ? .55 : .25) * Math.max(0, 1 - d / (VW * .75))); }
+  }
+  ambSet('fire', fv);
+  // محرك السيارة في مشهد النهاية حتى تتوقف
+  ambSet('engine', ph === 'ending' && G.endSwitched && !G.endArrived && !G.paused ? .55 : 0);
 }
 
 // عند خروج اللاعب من التطبيق/التبويب: نوقف كل الأصوات، وعند العودة نكمل الموسيقى
@@ -432,7 +561,7 @@ function updateTimeWarning() {
     const w = SND.warning;
     const on = G.phase === 'play' && !G.paused && !muted && me && !me.dead && G.timeLeft > 0 && G.timeLeft <= 10;
     if (on) {
-        if (w.paused) w.play().catch(() => {});
+        if (w.paused) w.play();
     } else {
         if (!w.paused) w.pause();
         if (!(G.timeLeft > 0 && G.timeLeft <= 10)) w.currentTime = 0;   // يبدأ من أول الصوت في المرة القادمة
@@ -788,12 +917,13 @@ function hurtMe(dmg, dir, kd, fromExplosion) {
   m.hp -= dmg; m.inv = .35;
   if (dir) m.face = -Math.sign(dir);   // يلتفت نحو من ضربه (dir = اتجاه الدفع بعيداً عن المهاجم)
   m.hk = (m.hk || 0) + 1;
-  playSnd(SND.hit); sparks(m.x, m.y, m.z + 34);
+  playSnd(meHitSnd || SND.punch, { vary: .12 }); meHitSnd = null; sparks(m.x, m.y, m.z + 34);
   m.atkT = -1; m.ah = false; m.throwT = -1;
 
   if (m.hp <= 0) {
     m.hp = 0; m.dead = true; m.lives--;
     m.st = 'd'; m.stT = 0; m.vx = dir * 240; m.vz = 220; m.respT = 2.3;
+    playLater(SND.bodyfall, 450);
   } else if (kd || m.z > (m.gz || 0) + 1 || fromExplosion) {
     m.st = 'd'; m.stT = 0; m.vx = dir * 220; m.vz = 210;
   } else {
@@ -809,6 +939,7 @@ function hurtMe(dmg, dir, kd, fromExplosion) {
   return true;
 }
 
+let enemyHitSnd = null, meHitSnd = null;   // صوت الضربة التالية (لكمة/ركلة/سكين/رصاص...) يحدده مصدر الضربة
 const ESCAPE = { hits: 3, window: 5, inv: .5 };   // الضربة الثالثة خلال 5 ثوانٍ من سابقتها → وميض وحماية نصف ثانية
 
 function hurtEnemy(e, dmg, dir, kd) {
@@ -816,9 +947,10 @@ function hurtEnemy(e, dmg, dir, kd) {
   // الزعيم: مدرّع لا يترنح، يموت فتُفتح البوابة
   if (e.k === 'boss') {
     e.hp -= dmg; e.hk++;
-    playSnd(SND.hit); sparks(e.x, e.y, 60);
+    playSnd(enemyHitSnd || SND.body_hit, { vary: .1 }); enemyHitSnd = null; sparks(e.x, e.y, 60);
     if (e.hp <= 0) {
       e.hp = 0; e.dying = true; e.st = 'dead'; e.t = 0; G.kills++; G.bossDead = true; shake = 12;
+      playLater(e.type === 'trike' ? SND.dino_stomp : SND.bodyfall, 420, { rate: .85 });
       items.push({ x: e.x, y: e.y, t: 0, kind: 'health' });
       const CS_ = curStage();
       toast(e.name + ' DEFEATED! ' + (CS_.window ? 'ESCAPE THROUGH THE WINDOW!' : CS_.stoneDoor ? 'BLOW UP THE STONE DOOR WITH A BOMB!' : G.stage < STAGE_COUNT - 1 ? 'GATE OPEN - NEXT STAGE!' : 'GATE OPEN - RUN!'), 3600);
@@ -828,11 +960,12 @@ function hurtEnemy(e, dmg, dir, kd) {
   }
   e.hp -= dmg;
   e.hk = (e.hk || 0) + 1;
-  playSnd(SND.hit); sparks(e.x, e.y, 34 * ET[e.k].sc);
+  playSnd(enemyHitSnd || SND.body_hit, { vary: .12 }); enemyHitSnd = null; sparks(e.x, e.y, 34 * ET[e.k].sc);
   e.did = false;
   if (e.hp <= 0) {
     e.dying = true;   // من هذه اللحظة لا يتفاعل مع أي شيء
     G.kills++;
+    playLater(inLake(e, lakeW()) ? SND.water_splash : SND.bodyfall, 380, { vary: .15 });   // سقوط الجسم بعد الموت
     const dropRoll = Math.random();
     if (dropRoll < (ET[e.k].drop || .4)) {
       let kind = 'ammo';
@@ -856,7 +989,7 @@ function blowDoor() {
   if (G.doorBlown) return;
   const D = doorW();
   G.doorBlown = true; G.doorBlownT = 0;
-  shake = 18; playSnd(SND.boom); playSnd(SND.box_destroy);
+  shake = 18; playSnd(SND.stone_door); playLater(SND.wall_break, 550);   // تفجير الباب الحجري ثم تساقط الحجارة
   explosions.push({ x: D.cx, y: D.bottom, z: (D.bottom - D.top) * .45, t: 0, dur: .7, maxR: 110 });
   const floorY = yBounds(D.cx - 30)[0];
   for (let i = 0; i < 48; i++) {
@@ -901,18 +1034,18 @@ function drawStoneDoor(g, t) {
   }
 }
 
-function createExplosion(x, y, z, radius, dm, owner) {
+function createExplosion(x, y, z, radius, dm, owner, small) {
   // قنبلة البطل قرب الباب الحجري بعد قتل الزعيم الأخير → يتحطم الباب
   if (owner === 'me' && G.bossDead && !G.doorBlown && curStage().stoneDoor) { const D = doorW(); if (Math.abs(x - D.cx) < radius + 50) blowDoor(); }
   explosions.push({ x: x, y: y, z: z, t: 0, dur: .55, maxR: radius });
-  playSnd(SND.boom); shake = Math.min(14, shake + 8);
+  playSnd(small || owner === 'barrel' ? SND.explosion_small : SND.explosion, { vary: .1 }); shake = Math.min(14, shake + 8);
   for (let i = 0; i < 24; i++) {
     const a = rr(0, 6.28), sp = rr(80, 280);
     parts.push({ x: x, y: y, z: z, vx: Math.cos(a) * sp, vz: Math.sin(a) * sp + 60, l: rr(.4, .9), c: i % 3 === 0 ? '#ffe58a' : (i % 3 === 1 ? '#ffb347' : '#ff6f4e') });
   }
   if (me && !me.dead && me.st !== 'd') {
     const dx = me.x - x, dy = me.y - y, dist = Math.hypot(dx, dy);
-    if (dist < radius) hurtMe(Math.round(dm * (1 - dist / radius)), (dx > 0 ? 1 : -1), true, true);
+    if (dist < radius) { meHitSnd = SND.body_hit; hurtMe(Math.round(dm * (1 - dist / radius)), (dx > 0 ? 1 : -1), true, true); }
   }
   if (owner !== 'boss') {          // قنابل الزعيم لا تؤذي أعوانه ولا نفسه
     for (const e of enemies) {
@@ -967,6 +1100,10 @@ const MELEE_SEGS = {
 };
 const MELEE_TIME = 360;   // مدة كل حركة (نفس مدة الضربة في اللعب) بالميلي ثانية
 function meleeSegs(side) { return MELEE_SEGS[HEROES[side].id] || [[0]]; }
+// الحركات التي هي ركلات (للصوت): رقم الحركة في MELEE_SEGS
+const KICK_SEGS = { player1h: [2, 3], player3h: [2] };
+function isKick(f) { return f.atkType === 2 || (KICK_SEGS[HEROES[f.side].id] || []).indexOf(f.mseg) >= 0; }
+function meleeHitSnd(f) { return f.weapon === 'knife' ? SND.knife_slash : (isKick(f) ? SND.kick : SND.punch); }
 const _segCache = {};
 // نسخة من صورة الضرب تعرض إطارات حركة واحدة فقط ثم تقف على آخر إطار
 function punchSeg(side, i) {
@@ -992,13 +1129,13 @@ function startMelee(f) {
   f.combo = f.comboT > 0 ? (f.combo + 1) % 3 : 0;
   f.comboT = .6; f.st = 'a'; f.atkT = 0; f.ak++; f.ah = false;
   f.atkType = (f.weapon === 'fist' ? strong : f.combo === 2) ? 1 : 0; f.hitEnemies = new Set();
-  playSnd(SND.swing);
+  playSnd(SND.knife_swoosh, { vol: f.weapon === 'knife' ? 1 : .5, rate: f.weapon === 'knife' ? 1 : 1.25, vary: .15 });
 }
 function startMeleeAir(f) {
   f.mseg = meleeSegs(f.side).length - 1;   // في الهواء: الركلة (آخر حركة)
   f.atkT = 0; f.ak++; f.atkType = 2; f.ah = false;
   f.hitEnemies = new Set();
-  playSnd(SND.swing);
+  playSnd(SND.knife_swoosh, { vol: .6, rate: 1.1, vary: .15 });
 }
 function fireGun(f) {
   const W = getWeapon(f);
@@ -1007,7 +1144,10 @@ function fireGun(f) {
   if (f.gunCd > 0) return;
   f.weapons[f.weapon]--; f.gunCd = W.cd;
   f.ak++; f.atkT = 0; f.atkType = 0; f.st = 'a'; f.ah = false;
-  playSnd(SND.shoot);
+  if (f.weapon === 'smg') {   // الرشاش: صوت رشقة متواصل ما دام يطلق، ويتوقف عند التوقف
+    f.smgT = .25;
+    if (!f.smgSnd || f.smgSnd.done) f.smgSnd = playSnd(SND.machinegun, { force: true });
+  } else playSnd(SND.gunshot, f.weapon === 'shotgun' ? { rate: .72, vol: 1.3 } : { vary: .08 });
   for (let s = 0; s < W.shots; s++) {
     const spread = (Math.random() - .5) * W.spread;
     bullets.push({
@@ -1021,13 +1161,13 @@ function throwBomb(f) {
   if (f.bombs <= 0) return;
   f.bombs--;
   f.tk = (f.tk || 0) + 1;
-  f.throwT = 0.3;
+  f.throwT = 0.3; playSnd(SND.bomb_throw, { vary: .1 });
   bombs.push({ x: f.x + f.face * 16, y: f.y, z: f.z + 40, vx: f.face * BOMB.vx, vz: BOMB.vz, t: 0, fuse: BOMB.fuse, owner: 'me', dm: BOMB.dm, radius: BOMB.radius, settled: false });
 }
 function placeMine(f) {
   if (f.mines <= 0) return;
   f.mines--;
-  f.mineT = 0.25; f.lk = (f.lk || 0) + 1;   // صورة _loot لمدة ثانية بعد وضع اللغم (lk يعيد تشغيل الـ GIF)
+  f.mineT = 0.25; f.lk = (f.lk || 0) + 1; playSnd(SND.mine_beep);   // صورة _loot لمدة ثانية بعد وضع اللغم (lk يعيد تشغيل الـ GIF)
   mines.push({ x: f.x, y: f.y, t: 0, armed: false, armT: MINE.armTime, owner: 'me', dm: MINE.dm, radius: MINE.radius, gone: false });
 }
 function switchWeapon(f) {
@@ -1048,7 +1188,7 @@ function applyMeleeHits(f) {
   for (const e of enemies) {
     if (!alive(e) || f.hitEnemies.has(e)) continue;
     if (inReach(f.x, f.y, f.z, f.face, A.reach, e.x, e.y, 0, ET[e.k].rad)) {
-      f.hitEnemies.add(e); hurtEnemy(e, A.dm, f.face, A.kd || f.atkType === 2); G.dmgDealt += A.dm;
+      f.hitEnemies.add(e); enemyHitSnd = meleeHitSnd(f); hurtEnemy(e, A.dm, f.face, A.kd || f.atkType === 2); G.dmgDealt += A.dm;
     }
   }
   if (G.stage === 0 && !f.hitEnemies.has('door') && nearDoor(f.x, f.y, A.reach) && (S0.door.x - f.x) * f.face > -14) {
@@ -1059,12 +1199,14 @@ function applyMeleeHits(f) {
   }
   for (const c of crates) {
     if (!c.broken && Math.abs(c.x - f.x) < A.reach && Math.abs(c.y - f.y) < 20 && (c.x - f.x) * f.face > -12) {
-      c.hp -= A.dm; if (c.hp <= 0) breakCrate(c);
+      c.hp -= A.dm; if (c.hp <= 0) breakCrate(c); else if (!f.hitEnemies.has(c)) playSnd(SND.wood_hit, { vary: .15 });
+      f.hitEnemies.add(c);
     }
   }
   for (const b of barrels) {
     if (!b.exploded && Math.abs(b.x - f.x) < A.reach && Math.abs(b.y - f.y) < 20 && (b.x - f.x) * f.face > -12) {
-      b.hp -= A.dm; if (b.hp <= 0) explodeBarrel(b);
+      b.hp -= A.dm; if (b.hp <= 0) explodeBarrel(b); else if (!f.hitEnemies.has(b)) playSnd(SND.barrel_hit, { vary: .1 });
+      f.hitEnemies.add(b);
     }
   }
 }
@@ -1072,6 +1214,22 @@ function applyMeleeHits(f) {
 // ==========================================
 // UPDATE LOGIC
 // ==========================================
+// خطوات البطل: خطوة عادية عند المشي، صوت جري متواصل عند الجري، وخطوات في الماء داخل البحيرة
+function heroStepSnd(dt) {
+  const m = me;
+  if (!m) return;
+  const ground = m.z <= (m.gz || 0) + 1 && m.st !== 'j' && m.st !== 'd' && !m.dead && !m.hidden;
+  const moving = ground && m.mv && (G.phase === 'play' || G.phase === 'trans');
+  const wet = moving && inLake(m, lakeW());
+  const running = moving && !wet && runDir;
+  if (running) { if (!m.runSnd || m.runSnd.done) m.runSnd = playSnd(SND.running, { force: true }); }
+  else if (m.runSnd) { m.runSnd.stop(.1); m.runSnd = null; }
+  if (moving && !running) {
+    m.stepT = (m.stepT || 0) - dt;
+    if (m.stepT <= 0) { playSnd(wet ? SND.water_step : SND.footstep, { vary: .18 }); m.stepT = wet ? .38 : .34; }
+  } else m.stepT = .08;
+}
+
 function updateMe(dt) {
   const m = me;
   if (!m) return;
@@ -1080,6 +1238,7 @@ function updateMe(dt) {
   if (m.throwT > 0) m.throwT -= dt;
   if (m.lootT > 0) m.lootT -= dt;
   if (m.mineT > 0) m.mineT -= dt;
+  if (m.smgT > 0) { m.smgT -= dt; if (m.smgT <= 0 && m.smgSnd) { m.smgSnd.stop(.08); m.smgSnd = null; } }
 
   m.x += m.vx * dt; m.vx -= m.vx * Math.min(1, dt * 7);
   // الأرض تحت البطل: 0 أو سطح صندوق/برميل إذا كان فوقه
@@ -1089,8 +1248,12 @@ function updateMe(dt) {
     if (m.st === 'i' && m.z > gz + 4 && m.vz <= 0) { m.st = 'j'; m.atkT = -1; }   // نزل من حافة الصندوق
     m.vz -= 1000 * dt; m.z += m.vz * dt;
     if (m.z <= gz) {
+      const fallV = -m.vz;
       m.z = gz; m.vz = 0;
-      if (m.st === 'j') { m.st = 'i'; m.atkT = -1; m.ah = false; }
+      if (m.st === 'j') {
+        m.st = 'i'; m.atkT = -1; m.ah = false;
+        if (!inLake(m, lakeW())) playSnd(SND.land, { vol: fallV > 500 ? 1.5 : 1, vary: .1 });   // الهبوط (في البحيرة: صوت الماء بدلاً منه)
+      }
       if (gz > 0) { m.gz = gz; for (let i = 0; i < 5; i++) parts.push({ x: m.x + rr(-12, 12), y: m.y, z: gz, vx: rr(-50, 50), vz: rr(20, 70), l: rr(.15, .3), c: '#d8c9a8' }); }
     }
   }
@@ -1173,7 +1336,11 @@ function mkBoss() {
     active: false, dying: false, chargeT: 0, chargeDir: 1, burst: 0, burstT: 0, summoned: false, enraged: false, fade: 0 };
 }
 
+let lastRoarT = -99;
 function spawnWave(pack, f) {
+  if (pack.indexOf('raptor') >= 0 || pack.indexOf('trike') >= 0) {
+    if (G.time - lastRoarT > 10) { lastRoarT = G.time; playLater(SND.dino_roar, 400, { vol: .7, vary: .15 }); }
+  }
   pack.forEach((k, i) => {
     const behind = (pack.length > 3 && i % 3 === 2 && !ET[k].kd);
     const off = VW * .5 + 90 + i * 55 + rr(0, 30);
@@ -1221,7 +1388,7 @@ function enemyFire(e, R, tgt) {
   const dy = clamp((tgt.y - e.y) * 1.2, -40, 40);
   bullets.push({ x: e.x + dir * 26, y: e.y, z: R.z, vx: dir * R.speed * D.spd, vy: dy, vz: 0, dm: dm, owner: 'enemy',
     kind: R.kind, color: R.kind === 'bullet' ? '#ffdf6b' : '#dfe6ee', life: 1.3, t: 0 });
-  playSnd(R.kind === 'bullet' ? SND.shoot : SND.swing);
+  playSnd(R.kind === 'bullet' ? SND.enemy_pistol : SND.knife_throw, { vary: .1 });
   if (R.kind === 'bullet') for (let i = 0; i < 4; i++) parts.push({ x: e.x + dir * 30, y: e.y, z: R.z, vx: dir * rr(40, 120), vz: rr(-30, 40), l: rr(.08, .18), c: i % 2 ? '#fff3b0' : '#ffb347' });
 }
 // الكرة الحديدية المربوطة بحبل بني: تنطلق في خط مستقيم ثم تعود إلى صاحبها (enemy3)
@@ -1230,7 +1397,7 @@ function throwFlail(e, dm, reach, speed) {
   const dir = e.face;
   e.holdBall = true; e.st = 'atk'; e.t = 0; e.did = true; e.ak++;
   lobs.push({ own: e, dir: dir, x: e.x + dir * 22, y: e.y, z: FLAIL_Z, d: 0, max: reach, sp: speed, back: false, hit: false, dm: dm, t: 0 });
-  playSnd(SND.swing);
+  playSnd(SND.ball_swing, { vary: .08 });
 }
 function flailHand(b) { return b.own.x + b.dir * 22; }
 function updateLobs(dt) {
@@ -1255,7 +1422,7 @@ function updateLobs(dt) {
     // الإصابة (مرة واحدة في كل رمية، ذهاباً أو إياباً)
     if (!b.hit) {
       const hits = f => f && !f.dead && Math.abs(f.x - b.x) < 18 && Math.abs(f.y - b.y) < 16 && b.z >= (f.z || 0) - 8 && b.z <= (f.z || 0) + 80;
-      if (hits(me) && me.inv <= 0 && me.st !== 'd') { b.hit = true; hurtMe(b.dm, b.back ? -b.dir : b.dir, true); b.back = true; }
+      if (hits(me) && me.inv <= 0 && me.st !== 'd') { b.hit = true; meHitSnd = SND.ball_hit; hurtMe(b.dm, b.back ? -b.dir : b.dir, true); b.back = true; }
       else for (const a of allies) if (hits(a) && a.inv <= 0) { b.hit = true; hurtAlly(a, b.dm, b.dir, true, 2); b.back = true; break; }
     }
   }
@@ -1268,16 +1435,16 @@ function updateLobs(dt) {
 //  3) THE COLONEL   : قائد حراس الغابة، يطلق رشقات من البندقية ويرمي القنابل
 //  4) THE WARLORD   : الزعيم الأخير، رصاص + قنابل + ضربات قوية ويغضب عند نصف صحته
 function bossShoot(e, D) {
-  e.st = 'atk'; e.t = 0; e.did = true; e.ak++; e.shootCd = rr(1.4, 2.2) * D.cd * (e.enraged ? .7 : 1); playSnd(SND.shoot);
+  e.st = 'atk'; e.t = 0; e.did = true; e.ak++; e.shootCd = rr(1.4, 2.2) * D.cd * (e.enraged ? .7 : 1); playSnd(SND.machinegun, { rate: 1.1, vol: .8 });
   for (let i = -1; i <= 1; i++)
     bullets.push({ x: e.x + e.face * 30, y: e.y + i * 6, z: 26, vx: e.face * 620, vy: i * 18, vz: 0, dm: Math.round(9 * D.dmg), owner: 'boss', kind: 'bullet', color: '#ff4d4d', life: 1, t: 0 });
 }
 function bossBomb(e, D) {
-  e.st = 'atk'; e.t = 0; e.did = true; e.ak++; e.bombCd = rr(3, 5) * D.cd * (e.enraged ? .7 : 1);
+  e.st = 'atk'; e.t = 0; e.did = true; e.ak++; e.bombCd = rr(3, 5) * D.cd * (e.enraged ? .7 : 1); playSnd(SND.bomb_throw);
   bombs.push({ x: e.x + e.face * 20, y: e.y, z: 50, vx: e.face * BOMB.vx, vz: BOMB.vz, t: 0, fuse: BOMB.fuse, owner: 'boss', dm: Math.round(45 * D.dmg), radius: BOMB.radius, settled: false });
 }
 function bossKnives(e, D) {
-  e.st = 'atk'; e.t = 0; e.did = true; e.ak++; e.shootCd = rr(1.6, 2.4) * D.cd * (e.enraged ? .65 : 1); playSnd(SND.swing);
+  e.st = 'atk'; e.t = 0; e.did = true; e.ak++; e.shootCd = rr(1.6, 2.4) * D.cd * (e.enraged ? .65 : 1); playSnd(SND.knife_throw, { rate: .9, vol: 1.2 });
   const n = e.enraged ? 5 : 3;
   for (let i = 0; i < n; i++) {
     const s = i - (n - 1) / 2;
@@ -1285,7 +1452,7 @@ function bossKnives(e, D) {
   }
 }
 function bossRifle(e, D) {
-  playSnd(SND.shoot);
+  playSnd(SND.enemy_pistol, { vary: .1 });
   bullets.push({ x: e.x + e.face * 34, y: e.y, z: 62, vx: e.face * 640, vy: me ? clamp((me.y - e.y) * 1.3, -40, 40) : 0, vz: 0, dm: Math.round(8 * D.dmg), owner: 'boss', kind: 'bullet', color: '#ffdf6b', life: 1.1, t: 0 });
   for (let i = 0; i < 4; i++) parts.push({ x: e.x + e.face * 40, y: e.y, z: 62, vx: e.face * rr(40, 120), vz: rr(-30, 40), l: rr(.08, .18), c: i % 2 ? '#fff3b0' : '#ffb347' });
 }
@@ -1317,6 +1484,7 @@ function updateBoss(e, dt) {
   // عند نصف الصحة: يغضب ويستدعي أعوانه
   if (near && !e.summoned && e.hp < e.maxHp * .5) {
     e.summoned = true; e.enraged = true; shake = 8;
+    playSnd(e.type === 'trike' ? SND.dino_roar : SND.growl, { rate: .9 });   // الزعيم يغضب
     toast(e.name + ' IS ANGRY!', 1800);
     bossSummon(e, BOSS_HELP[e.type] || ['thug']);
   }
@@ -1327,17 +1495,22 @@ function updateBoss(e, dt) {
     // اندفاع BIG TONY
     e.chargeT -= dt; e.face = e.chargeDir; e.x += e.chargeDir * 440 * dt; e.mv = true; e.ph += dt * 16;
     if (Math.random() < .5) parts.push({ x: e.x - e.chargeDir * 20, y: e.y, z: 2, vx: -e.chargeDir * rr(30, 90), vz: rr(20, 80), l: rr(.2, .4), c: '#b9a98a' });
-    if (!e.did && near && Math.abs(m.x - e.x) < 42 && Math.abs(m.y - e.y) < 22 && m.z < 40) { e.did = true; hurtMe(Math.round(e.bdmg * 1.25 * D.dmg), e.chargeDir, true); }
+    if (!e.did && near && Math.abs(m.x - e.x) < 42 && Math.abs(m.y - e.y) < 22 && m.z < 40) { e.did = true; meHitSnd = e.type === 'trike' ? SND.dino_stomp : SND.kick; hurtMe(Math.round(e.bdmg * 1.25 * D.dmg), e.chargeDir, true); }
     for (const a of allies) if (!a.dead && Math.abs(a.x - e.x) < 40 && Math.abs(a.y - e.y) < 22) hurtAlly(a, 0, e.chargeDir, true, 3);
     for (const c of crates) if (!c.broken && Math.abs(c.x - e.x) < 34 && Math.abs(c.y - e.y) < 22) breakCrate(c);
     for (const b of barrels) if (!b.exploded && Math.abs(b.x - e.x) < 34 && Math.abs(b.y - e.y) < 22) explodeBarrel(b);
-    if (e.x <= minX || e.x >= maxX) { e.chargeT = 0; shake = Math.min(12, shake + 6); e.cd = .8; }
+    if (e.x <= minX || e.x >= maxX) { e.chargeT = 0; shake = Math.min(12, shake + 6); e.cd = .8; playSnd(SND.dino_stomp, { rate: e.type === 'trike' ? 1 : 1.2 }); }
+    if (e.chargeT <= 0 && e.chargeSnd) { e.chargeSnd.stop(.25); e.chargeSnd = null; }
   } else if (e.st === 'wind') {
     // تحذير قبل الاندفاع
-    if (e.t >= .5) { e.st = 'walk'; e.t = 0; e.chargeT = 1.2; e.did = false; e.skillCd = rr(4, 6) * cdk; }
+    if (e.t >= .5) {
+      e.st = 'walk'; e.t = 0; e.chargeT = 1.2; e.did = false; e.skillCd = rr(4, 6) * cdk;
+      // صوت الاندفاع: خطوات ديناصور لـ KING TRIKE، وجري ثقيل لـ BIG TONY
+      e.chargeSnd = e.type === 'trike' ? playSnd(SND.dino_steps) : playSnd(SND.running, { rate: .8, vol: 1.6 });
+    }
   } else if (e.st === 'atk') {
     if (!e.did && e.t < .16 && near && inReach(e.x, e.y, 0, e.face, T.reach, m.x, m.y, m.z, 14)) {
-      e.did = true; hurtMe(Math.round(e.bdmg * D.dmg), e.face, true);
+      e.did = true; meHitSnd = e.type === 'trike' ? SND.dino_stomp : SND.punch; hurtMe(Math.round(e.bdmg * D.dmg), e.face, true);
     }
     if (!e.didA && e.t < .16) {
       for (const a of allies) if (!a.dead && inReach(e.x, e.y, 0, e.face, T.reach, a.x, a.y, 0, 14)) { hurtAlly(a, 0, e.face, true, 2); e.didA = true; }
@@ -1422,7 +1595,7 @@ function updateEnemies(dt) {
       if (e.standT <= 0) {
         e.vz = 320;
         const tl = (320 + Math.sqrt(320 * 320 + 1800 * e.z)) / 900;   // زمن الوصول للأرض
-        e.jvx = (e.tx - e.x) / tl; playSnd(SND.jump);
+        e.jvx = (e.tx - e.x) / tl; playSnd(SND.jump, { vol: .6, rate: .9, vary: .15 });
       }
       continue;
     }
@@ -1431,7 +1604,7 @@ function updateEnemies(dt) {
       e.vz -= 900 * dt; e.z += e.vz * dt;
       if (e.jvx) e.x += e.jvx * dt;
       if (e.z <= 0) {
-        e.z = 0; e.vz = 0; e.jvx = 0; shake = Math.min(6, shake + 2);
+        e.z = 0; e.vz = 0; e.jvx = 0; shake = Math.min(6, shake + 2); playSnd(SND.land, { rate: .85, vary: .15 });
         for (let i = 0; i < 6; i++) parts.push({ x: e.x + rr(-14, 14), y: e.y, z: 0, vx: rr(-70, 70), vz: rr(30, 90), l: rr(.2, .4), c: '#cfc6b8' });
       }
       if (me) e.face = me.x >= e.x ? 1 : -1;
@@ -1441,7 +1614,7 @@ function updateEnemies(dt) {
     if (e.charge && alive(e) && e.st === 'walk') {
       e.x += e.charge * 330 * dt; e.face = e.charge; e.mv = true; e.ph += dt * 14;
       if (Math.random() < .3) parts.push({ x: e.x - e.charge * 16, y: e.y, z: 2, vx: -e.charge * rr(20, 70), vz: rr(20, 60), l: rr(.2, .35), c: '#7a6a4a' });
-      if (!e.did && me && !me.dead && Math.abs(me.x - e.x) < 30 && Math.abs(me.y - e.y) < 16 && me.z < 30) { e.did = true; hurtMe(Math.round(T.dmg * 1.5), e.charge, true); }
+      if (!e.did && me && !me.dead && Math.abs(me.x - e.x) < 30 && Math.abs(me.y - e.y) < 16 && me.z < 30) { e.did = true; meHitSnd = SND.dino_stomp; hurtMe(Math.round(T.dmg * 1.5), e.charge, true); }
       for (const a of allies) if (!a.dead && Math.abs(a.x - e.x) < 28 && Math.abs(a.y - e.y) < 16) hurtAlly(a, 0, e.charge, true, 2);
       if ((e.charge > 0 && (e.x > cam + VW + 260 || e.x > WORLD - ARENA)) || (e.charge < 0 && e.x < cam - 260)) e.remove = true;
       continue;
@@ -1490,7 +1663,7 @@ function updateEnemies(dt) {
         if (!e.did && t2) { e.did = true; enemyFire(e, R, t2); if (e.holdBall) continue; }
         if (e.t >= .34) { e.st = 'walk'; e.t = 0; e.shot = false; e.did = false; e.rcd = rr(R.cd[0], R.cd[1]) * DIFF[G.diff].cd; e.cd = Math.max(e.cd, .5); }
       } else {
-        if (!e.did && e.t < .16 && t2 && !t2.dead && inReach(e.x, e.y, 0, e.face, T.reach, t2.x, t2.y, t2.z, 14)) { e.did = true; if (t2.ally) hurtAlly(t2, Math.round(T.dmg * DIFF[G.diff].dmg), e.face, T.kd); else hurtMe(T.dmg, e.face, T.kd); }
+        if (!e.did && e.t < .16 && t2 && !t2.dead && inReach(e.x, e.y, 0, e.face, T.reach, t2.x, t2.y, t2.z, 14)) { e.did = true; if (t2.ally) hurtAlly(t2, Math.round(T.dmg * DIFF[G.diff].dmg), e.face, T.kd); else { meHitSnd = (e.k === 'raptor' || e.k === 'trike') ? SND.knife_stab : SND.punch; hurtMe(T.dmg, e.face, T.kd); } }
         if (e.t >= .34) { e.st = 'walk'; e.t = 0; e.cd = rr(1, 1.8); e.did = false; }
       }
     } else if (e.st === 'hurt') {
@@ -1527,10 +1700,10 @@ function pickupItems(f) {
     if (Math.abs(f.x - it.x) < 26 && Math.abs(f.y - it.y) < 20) {
       it.gone = true;
       f.lootT = .5; f.lk = (f.lk || 0) + 1;
-      playSnd(SND.pick);
+      // صوت لكل نوع: الطاقة / الذخيرة والأسلحة النارية / باقي الأغراض
+      playSnd(it.kind === 'health' ? SND.heal : (it.kind === 'ammo' || (WEAPONS[it.kind] && WEAPONS[it.kind].type === 'gun')) ? SND.reload : SND.pickup);
       if (it.kind === 'health') {
         f.hp = Math.min(100, f.hp + 30); floatText(f.x, f.y - 70, '+30', '#9dff8a');
-        playSnd(SND.health_refill);
       } else if (it.kind === 'bomb') {
         f.bombs++; floatText(f.x, f.y - 70, 'BOMB!', '#ffb347');
       } else if (it.kind === 'ammo') {
@@ -1567,13 +1740,13 @@ function spawnHostages() {
 function hitHostage(h, dm) {
   if (h.freed) return;
   h.hp -= dm; h.hk++;
-  playSnd(SND.swing); sparks(h.x, h.y, 44, '#d9c08a');
+  playSnd(SND.knife_slash, { vary: .15 }); sparks(h.x, h.y, 44, '#d9c08a');
   if (h.hp <= 0) freeHostage(h);
   else floatText(h.x, h.y - HOSTAGE_VIS - 6, 'CUT!', '#ffe58a');
 }
 function freeHostage(h) {
   h.freed = true;
-  playSnd(SND.box_destroy); playSnd(SND.pick);
+  playSnd(SND.life_up);   // الرهينة تحررت وانضمت إليك
   const a = mkAlly(h);
   allies.push(a);
   const nm = HEROES[h.side].name;
@@ -1594,7 +1767,7 @@ function hurtAlly(a, dmg, dir, kd, hits) {
   if (!a || a.dead || a.inv > 0 || G.phase !== 'play') return false;
   dmg = (hits || 1) * ALLY.hp / ALLY.hits;   // كل ضربة تأخذ جزءاً ثابتاً من الشريط مهما كان العدو
   a.hp -= dmg; a.inv = .2; a.hk++;
-  playSnd(SND.hit); sparks(a.x, a.y, 34);
+  playSnd(SND.punch, { vol: .7, vary: .15 }); sparks(a.x, a.y, 34);
   a.atkT = -1; a.did = false; a.vicT = 0;
   if (a.hp <= 0) {
     a.hp = 0; a.dead = true; a.st = 'd'; a.stT = 0; a.deadT = 0; a.vx = dir * 240;
@@ -1642,7 +1815,7 @@ function updateAllies(dt) {
         for (const e of enemies) {
           if (whiff || !alive(e) || (e.k === 'boss' && !e.active)) continue;
           if (inReach(a.x, a.y, 0, a.face, ALLY.reach, e.x, e.y, 0, e.k === 'boss' ? 22 : ET[e.k].rad)) {
-            hurtEnemy(e, strong ? ALLY.dmKd : ALLY.dm, a.face, strong); G.dmgDealt += ALLY.dm;
+            enemyHitSnd = strong ? SND.kick : SND.punch; hurtEnemy(e, strong ? ALLY.dmKd : ALLY.dm, a.face, strong); G.dmgDealt += ALLY.dm;
           }
         }
       }
@@ -1675,7 +1848,7 @@ function updateAllies(dt) {
         if (d > 6) { a.x += dx / d * ALLY.spd * dt; a.y += dy / d * ALLY.spd * .7 * dt; a.mv = true; a.ph += dt * 12; }
         if (a.cd <= 0 && inReach(a.x, a.y, 0, a.face, ALLY.reach - 6, tgt.x, tgt.y, 0, tr)) {
           nextSeg(a, a.side); a.combo = a.comboT > 0 ? (a.combo + 1) % 3 : 0; a.comboT = .7;
-          a.st = 'a'; a.atkT = 0; a.ak++; a.did = false; a.cd = ALLY.cd; playSnd(SND.swing);
+          a.st = 'a'; a.atkT = 0; a.ak++; a.did = false; a.cd = ALLY.cd; playSnd(SND.knife_swoosh, { vol: .35, rate: 1.25, vary: .2 });
         }
       } else if (a.dazeT > 0) {
         // شارد الذهن: يقف مكانه
@@ -1744,7 +1917,7 @@ if (Math.abs(e.x - b.x) < (e.k === 'boss' ? 20 : ET[e.k].rad) && Math.abs(e.y - 
       // رصاص الزعيم ورصاص حارس الغابة وسكاكين النينجا: تصيب البطل وحلفاءه (القفز العالي يتفاداها)
       const hits = f => Math.abs(f.x - b.x) < 16 && Math.abs(f.y - b.y) < 18 && b.z >= (f.z || 0) - 10 && b.z <= (f.z || 0) + 75;
       if (me && !me.dead && me.inv <= 0 && me.st !== 'd' && hits(me)) {
-        hurtMe(b.dm, Math.sign(b.vx), false); b.gone = true;
+        meHitSnd = b.kind === 'knife' ? SND.knife_stab : SND.body_hit; hurtMe(b.dm, Math.sign(b.vx), false); b.gone = true;
       } else {
         for (const a of allies) if (!a.dead && a.inv <= 0 && hits(a)) { hurtAlly(a, b.dm, Math.sign(b.vx), false); b.gone = true; break; }
       }
@@ -1758,12 +1931,12 @@ if (Math.abs(e.x - b.x) < (e.k === 'boss' ? 20 : ET[e.k].rad) && Math.abs(e.y - 
     }
     if (!b.gone) {
       for (const c of crates) {
-        if (!c.broken && bulletInFrame(b, dt, c, IMG.crates[c.v].ok, PROP_VIS.crate)) { c.hp -= b.dm; if (c.hp <= 0) breakCrate(c); b.gone = true; break; }
+        if (!c.broken && bulletInFrame(b, dt, c, IMG.crates[c.v].ok, PROP_VIS.crate)) { c.hp -= b.dm; if (c.hp <= 0) breakCrate(c); else playSnd(SND.wood_hit, { vary: .2 }); b.gone = true; break; }
       }
     }
     if (!b.gone) {
       for (const bar of barrels) {
-        if (!bar.exploded && bulletInFrame(b, dt, bar, IMG.barrels[bar.v].ok, PROP_VIS.barrel)) { bar.hp -= b.dm; if (bar.hp <= 0) explodeBarrel(bar); b.gone = true; break; }
+        if (!bar.exploded && bulletInFrame(b, dt, bar, IMG.barrels[bar.v].ok, PROP_VIS.barrel)) { bar.hp -= b.dm; if (bar.hp <= 0) explodeBarrel(bar); else playSnd(SND.barrel_hit, { vary: .15 }); b.gone = true; break; }
       }
     }
   }
@@ -1782,7 +1955,7 @@ function updateBombs(dt) {
     }
     if (!b.settled) {
       b.x += b.vx * dt; b.z += b.vz * dt; b.vz -= 800 * dt;
-      if (b.z <= 0) { b.z = 0; if (Math.abs(b.vz) < 80) { b.settled = true; b.vz = 0; b.vx *= .3; } else { b.vz = -b.vz * .45; } }
+      if (b.z <= 0) { b.z = 0; if (!b.clank) { b.clank = true; playSnd(SND.bomb_clank, { vary: .1 }); } if (Math.abs(b.vz) < 80) { b.settled = true; b.vz = 0; b.vx *= .3; } else { b.vz = -b.vz * .45; } }
       b.vx *= .98;
     }
     if (b.t >= b.fuse) { b.gone = true; createExplosion(b.x, b.y, b.z, b.radius, b.dm, b.owner); }
@@ -1795,7 +1968,7 @@ function updateBombs(dt) {
     if (m.armed && !m.gone) {
       let trig = false;
       for (const e of enemies) { if (alive(e) && Math.abs(e.x - m.x) < MINE.trigger && Math.abs(e.y - m.y) < 20) { trig = true; break; } }
-      if (trig) { m.gone = true; createExplosion(m.x, m.y, 0, m.radius, m.dm, m.owner); }
+      if (trig) { m.gone = true; createExplosion(m.x, m.y, 0, m.radius, m.dm, m.owner, true); }
     }
   }
   mines = mines.filter(m => !m.gone);
@@ -2317,13 +2490,13 @@ function loadStage(n) {
 function stageClear() {
   if (G.phase !== 'play') return;
   G.phase = 'trans'; G.transT = 0; G.transOutT = 0; G.stagesCleared++;
+  playLater(SND.stage_clear, G.stage === 0 ? 500 : 250);   // نغمة إنهاء المرحلة
   if (G.stage === 0) return;   // المرحلة 0: البطل يدخل من الباب المحطم مباشرة
   banner('STAGE CLEAR!', true);
-  playSnd(SND.pick);
   const m = me;
   m.hp = Math.min(100, m.hp + 40);
   floatText(m.x, m.y - 90, '+40', '#9dff8a');
-  playSnd(SND.health_refill);
+  playLater(SND.powerup, 1600, { vol: .8 });   // +40 طاقة
 }
 // ---------- القفز من النافذة (نهاية المرحلة 1) ----------
 function winW() { const W = curStage().window, k = bgScale(); return { left: W.left * k, cx: W.cx * k, sill: W.sill * k, launchX: W.launchX * k, poly: W.poly.map(p => [p[0] * k, p[1] * k]) }; }
@@ -2417,6 +2590,7 @@ function updateWater(dt) {
     const air = (o.z || 0) >= 4;
     if (inLake(o, L)) {
       if (o._air) {   // هبط في الماء بعد قفزة: رذاذ كبير
+        playSnd(o === me ? SND.water_jump : SND.water_splash, { vary: .12, vol: o === me ? 1 : .7 });
         ripples.push({ x: o.x, y: o.y, t: 0, life: 1.1, r: 34 });
         for (let i = 0; i < 14; i++) parts.push({ x: o.x + rr(-10, 10), y: o.y, z: 2, vx: rr(-110, 110), vz: rr(90, 230), l: rr(.35, .7), c: i % 2 ? '#d8f6ff' : '#7fd3e6' });
       }
@@ -2584,6 +2758,7 @@ function drawRipples(g) {
 function dropFromWindow() {
   const m = me;
   G.dropping = true; G.dropUntil = G.time + 3;   // الواجهة والأزرار مخفية 3 ثوانٍ في بداية المرحلة 2
+  playLater(SND.glass, 150, { vol: .45, rate: 1.1 });   // شظايا الزجاج تتساقط مع البطل
   m.x = START + 60; m.y = 300; m.z = 330; m.vz = -60; m.st = 'j'; m.atkT = -1; m.inv = 1.2; m.face = 1;
   allies.forEach((a, i) => { a.x = START - 10 - i * 45; a.y = clamp(300 + (i % 2 ? 30 : -30), Y0, YB); a.z = 380 + i * 90; a.vz = -60; a.st = 'i'; });
   for (let i = 0; i < 30; i++) {
@@ -2693,6 +2868,7 @@ function stageEvent(kind) {
   } else if (kind === 'stampede') {
     // المرحلة 3: ديناصورات هائجة تركض عبر الغابة، اقفز فوق صندوق أو ابتعد عن طريقها
     toast('STAMPEDE! JUMP ON A CRATE!', 2200);
+    playSnd(SND.dino_roar); playLater(SND.dino_steps, 600);   // زئير ثم خطوات الديناصورات الهائجة
     const dir = G.evN % 2 ? -1 : 1;
     const n = G.evN > 1 ? 5 : 4;
     for (let i = 0; i < n; i++) {
@@ -2728,7 +2904,7 @@ function endRound(win) {
   if (G.phase !== 'play') return;
   G.phase = 'over'; G.overT = 0; G.result = { win: win };
   settleRound(win);
-  playSnd(win ? SND.win : SND.lose);
+  if (!(win && G.endScene)) playSnd(win ? SND.win : SND.lose);   // في مشهد النهاية نغمة الفوز سبق تشغيلها
   banner(win ? 'VICTORY!' : 'GAME OVER', true);
   if (!win) SND.bgm.pause();
 }
@@ -2748,6 +2924,7 @@ function showResult() {
   $('#sDmg').textContent = G.dmgDealt;
   banner('');
   $('#result').hidden = false;
+  if (G.reward > 0) playLater(SND.coin, 900);   // العملات المكتسبة
 }
 
 function playAgain() {
@@ -2801,7 +2978,7 @@ function setPause(p) {
   G.paused = p;
   $('#pausemsg').hidden = !p;
   paintPause();
-  if (p) { SND.bgm.pause(); }
+  if (p) { SND.bgm.pause(); if (me) { if (me.runSnd) { me.runSnd.stop(); me.runSnd = null; } if (me.smgSnd) { me.smgSnd.stop(); me.smgSnd = null; } } }
   else {
     if (!muted) SND.bgm.play().catch(() => {});
     inp.atk = inp.jmp = inp.sw = inp.bomb = inp.mine = false;
@@ -2883,10 +3060,10 @@ function hitDoor(dm) {
   if (!st || !st.open || st.door.broken) return false;
   const D = st.door;
   D.hp -= dm; D.hitT = .15;
-  playSnd(SND.hit); shake = Math.min(6, shake + 2);
+  playSnd(SND.wood_hit, { rate: .85, vol: 1.3, vary: .1 }); shake = Math.min(6, shake + 2);
   for (let i = 0; i < 6; i++) parts.push({ x: S0.door.x + rr(-12, 12), y: S0.door.bottom, z: rr(20, 70), vx: rr(-90, 40), vz: rr(40, 140), l: rr(.25, .5), c: i % 2 ? '#3d7fc2' : '#7a5230' });
   if (D.hp <= 0) {
-    D.broken = true; shake = 12; playSnd(SND.box_destroy);
+    D.broken = true; shake = 12; playSnd(SND.door_break);
     for (let i = 0; i < 22; i++) parts.push({ x: S0.door.x + rr(-14, 14), y: S0.door.bottom, z: rr(10, 85), vx: rr(-160, 60), vz: rr(60, 220), l: rr(.4, .9), c: i % 3 ? '#3d7fc2' : '#5a3a22' });
     stageClear();
   }
@@ -3002,6 +3179,7 @@ function stepEnding(dt) {
   // ثم تظلم الشاشة تدريجياً حتى الأسود الداكن، ثم تظهر نافذة الفوز
   if (!arrived && cam >= WORLD - VW - .5) {
     G.endArrived = true; G.endHoldT = 0;
+    playSnd(SND.brake); playLater(SND.win, 700);   // السيارة تتوقف، ثم نغمة الفوز مع صور الفوز
     const C2 = endingCar();
     endRunners.forEach((r, i) => {   // كل بطل يقف في مكان ظاهر بجانب السيارة
       r.x = Math.max(cam + 40 + i * 50, Math.min(r.x, C2.x - C2.w / 2 - 30 - i * 55)); r.y2 = r.y; r.vicT = 0;
@@ -3109,7 +3287,7 @@ function stepGame(dt) {
     pickupItems(me);
     items = items.filter(i => !i.gone);
 
-    if (!G.bossIntro && curStage().boss && me.x > WORLD - ARENA) { G.bossIntro = true; toast('BOSS FIGHT: ' + curStage().boss.name + '!', 2400); }
+    if (!G.bossIntro && curStage().boss && me.x > WORLD - ARENA) { G.bossIntro = true; toast('BOSS FIGHT: ' + curStage().boss.name + '!', 2400); playSnd(curStage().boss.type === 'trike' ? SND.dino_roar : SND.growl); }
 
     if (me.lives <= 0 && me.dead) endRound(false);
     else if (curStage().window && G.bossDead && !me.dead) {
@@ -3336,7 +3514,10 @@ $('#rAgain').parentNode.insertBefore(contBtn, $('#rAgain'));
 $('#rAgain').classList.add('alt');
 contBtn.addEventListener('click', continueGame);
 $('#rAgain').addEventListener('click', playAgain);
-$('#rMenu').addEventListener('click', () => { window.location.href = 'home.html'; });
+$('#rMenu').addEventListener('click', () => { playSnd(SND.click); setTimeout(() => { window.location.href = 'home.html'; }, 150); });
+// أصوات أزرار اللعبة: نقرة عادية، واختيار للأزرار التي تبدأ اللعب
+['#pause', '#rAgain', '#rCont'].forEach(id => { const b = $(id); if (b) b.addEventListener('pointerdown', () => playSnd(id === '#pause' ? SND.click : SND.menu_select)); });
+document.querySelectorAll('.cbtn').forEach(b => b.addEventListener('pointerdown', () => { if (b.id === 'bSwitch') playSnd(SND.click, { vol: .6 }); }));
 const ICON_ON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 4V5L7 9H3z" fill="currentColor"/><path d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
 const ICON_OFF = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 4V5L7 9H3z" fill="currentColor"/><path d="M16 9l6 6M22 9l-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
 function paintMute() {
@@ -3349,6 +3530,7 @@ paintMute();
 $('#mute').addEventListener('click', () => {
   muted = !muted;
   paintMute();
+  playSnd(SND.click);
   SND.bgm.muted = muted;
   if (muted) SND.warning.pause();
 });
@@ -3374,7 +3556,8 @@ function loop(now) {
   last = now; G.t = (now - T0) / 1000;
   try {
     if (rawDt > 0 && rawDt < .5) watchFps(rawDt);
-    if (!G.paused) stepGame(dt);
+    if (!G.paused) { stepGame(dt); heroStepSnd(dt); }
+    updateAmbience(); BGM.sync(dt);
     render(G.t);
     applyZoom();
     if (G.phase !== 'menu') updateHUD();

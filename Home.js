@@ -113,26 +113,37 @@ function renderStore() {
       '</div></div>';
   }).join('');
 }
-// صوت النقر بـ Web Audio (بدون تأخر على الهواتف)، مع رجوع إلى Audio العادي عند الحاجة
-let sndAC = null, sndBuf = null, sndAB = null;
-if (location.protocol !== 'file:') fetch('sounds/powerup_collect.mp3').then(r => r.arrayBuffer()).then(ab => { sndAB = ab; }).catch(() => {});
+// أصوات الصفحة الرئيسية من مجلد sounds-new (Web Audio بدون تأخر على الهواتف، مع رجوع إلى Audio العادي)
+const HSND = { click: 'sounds-new/5-items-ui/click.mp3', select: 'sounds-new/5-items-ui/menu_select.mp3', coin: 'sounds-new/5-items-ui/coin.mp3' };
+let sndAC = null;
+const sndAB = {}, sndBuf = {};
+if (location.protocol !== 'file:') Object.keys(HSND).forEach(k => fetch(HSND[k]).then(r => r.arrayBuffer()).then(ab => { sndAB[k] = ab; decodeH(k); }).catch(() => {}));
+function decodeH(k) { if (sndAC && sndAB[k] && !sndBuf[k]) { const ab = sndAB[k]; sndAB[k] = null; sndAC.decodeAudioData(ab, b => { sndBuf[k] = b; }, () => {}); } }
 // محرك الصوت يُنشأ مع أول ضغطة فقط (المتصفح يمنعه قبل ذلك)
 function sndInit() {
-  if (sndAC || !sndAB) return;
+  if (sndAC) return;
   try { const C = window.AudioContext || window.webkitAudioContext; if (!C) return; sndAC = new C(); } catch (e) { return; }
-  sndAC.decodeAudioData(sndAB.slice(0), b => { sndBuf = b; }, () => {});
+  Object.keys(HSND).forEach(decodeH);
 }
 ['pointerup', 'touchend', 'keydown', 'mousedown'].forEach(ev => addEventListener(ev, sndInit, { capture: true, passive: true }));
-function snd() {
+function snd(k) {
+  k = k || 'coin';
   try {
-    if (sndAC && sndBuf) {
+    if (sndAC && sndBuf[k]) {
       if (sndAC.state === 'suspended') sndAC.resume().catch(() => {});
-      const s = sndAC.createBufferSource(); s.buffer = sndBuf; s.connect(sndAC.destination); s.start();
+      const s = sndAC.createBufferSource(); s.buffer = sndBuf[k]; s.connect(sndAC.destination); s.start();
       return;
     }
-    const a = new Audio('sounds/powerup_collect.mp3'); a.play().catch(() => {});
+    const a = new Audio(HSND[k]); a.play().catch(() => {});
   } catch (e) {}
 }
+// كل الأزرار: نقرة، واختيار البطل وزر اللعب: صوت الاختيار (الشراء والبيع لهما صوت العملة)
+addEventListener('pointerdown', e => {
+  const el = e.target.closest('button, .card, .chip, [data-act]');
+  if (!el || el.disabled || el.closest('.buy, .sell')) return;
+  sndInit();
+  snd(el.matches('#prevH, #nextH, #startBtn2, .card') ? 'select' : 'click');
+}, { capture: true });
 function buy(id) {
   const it = ITEMS.find(i => i.id === id);
   if (!it || (it.perm && S.owned[id])) return;
@@ -169,7 +180,7 @@ addEventListener('keydown', e => { if (e.key === 'Escape') $('#store').hidden = 
 $('#startBtn2').addEventListener('click', () => {
   try { localStorage.setItem('gameConfig', JSON.stringify({ side: S.side, diff: S.diff })); } catch (e) {}
   save();
-  window.location.href = 'game.html';
+  setTimeout(() => { window.location.href = 'game.html'; }, 180);   // يسمح لصوت الاختيار بالظهور
 });
 
 
