@@ -11,14 +11,14 @@ const HEROES = [
 ];
 // permanent = يُشترى مرة واحدة، وغير ذلك يُستهلك (يرجع منه ما لم يُستعمل)
 const ITEMS = [
-  { id: 'pistol',  tab: 'w', name: 'PISTOL',  desc: '24 rounds. Accurate sidearm. Yours for every run.', price: 150, icon: 'Pistol-gun.png',  perm: true },
-  { id: 'smg',     tab: 'w', name: 'SMG',     desc: '60 rounds. Rapid fire spray. Yours for every run.', price: 400, icon: 'machine-gun.png', perm: true },
-  { id: 'shotgun', tab: 'w', name: 'SHOTGUN', desc: '12 shells. Devastating at close range.',            price: 350, icon: 'Rifle-gun.png', perm: true },
-  { id: 'armor',   tab: 's', name: 'VITAL VEST', desc: 'Take 20% less damage. Permanent.',               price: 250, icon: 'heart.png', perm: true },
-  { id: 'ammo',    tab: 's', name: 'AMMO PACK',  desc: '+60% ammo for your guns at the start of a run.', price: 50,  icon: 'bullets-amo.png' },
-  { id: 'bomb',    tab: 's', name: 'BOMB',       desc: 'One extra bomb for your run. Press BOMB / G.',   price: 40,  icon: 'bomb.png' },
-  { id: 'mine',    tab: 's', name: 'LAND MINE',  desc: 'Place with MINE / E. Blows up under enemies.',   price: 60,  icon: 'Landmine.gif' },
-  { id: 'shuriken', tab: 's', name: 'SHURIKEN',  desc: 'Ninja throwing star.',                           price: 80,  icon: 'knef.png' }
+  { id: 'pistol',  tab: 'w', name: 'PISTOL',  desc: '24 rounds. Accurate sidearm. Yours for every run.', price: 150, icon: 'weapons/Pistol-gun.png',  perm: true },
+  { id: 'smg',     tab: 'w', name: 'SMG',     desc: '60 rounds. Rapid fire spray. Yours for every run.', price: 400, icon: 'weapons/machine-gun.png', perm: true },
+  { id: 'shotgun', tab: 'w', name: 'SHOTGUN', desc: '12 shells. Devastating at close range.',            price: 350, icon: 'weapons/Rifle-gun.png', perm: true },
+  { id: 'armor',   tab: 's', name: 'VITAL VEST', desc: 'Take 20% less damage. Permanent.',               price: 250, icon: 'items/heart.png', perm: true },
+  { id: 'ammo',    tab: 's', name: 'AMMO PACK',  desc: '+60% ammo for your guns at the start of a run.', price: 50,  icon: 'weapons/bullets-amo.png' },
+  { id: 'bomb',    tab: 's', name: 'BOMB',       desc: 'One extra bomb for your run. Press BOMB / G.',   price: 40,  icon: 'weapons/bomb.png' },
+  { id: 'mine',    tab: 's', name: 'LAND MINE',  desc: 'Place with MINE / E. Blows up under enemies.',   price: 60,  icon: 'weapons/Landmine_icon.png' },
+  { id: 'shuriken', tab: 's', name: 'SHURIKEN',  desc: 'Ninja throwing star.',                           price: 80,  icon: 'weapons/knef.png' }
 ];
 
 // ---------- الحفظ (رصيد 1000 عند أول تشغيل) ----------
@@ -33,11 +33,35 @@ function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e
 if (!(S.side >= 0 && S.side < HEROES.length)) S.side = 0;
 save();
 
-// ---------- البطل ----------
+// ---------- البطل (Sprite Sheet بدل GIF، يُرسم إطاراً إطاراً على canvas) ----------
+const HS = window.HOME_SPRITES || null;
+let heroAnim = null;
+if (HS) {
+  const cv = document.createElement('canvas');
+  cv.id = 'hImg'; cv.className = 'himg';
+  $('#hImg').replaceWith(cv);
+  (function heroLoop() {
+    requestAnimationFrame(heroLoop);
+    const A = heroAnim;
+    if (!A || !A.im.complete || !A.im.naturalWidth) return;
+    const M = A.M, t = (performance.now() - A.t0) % A.total;
+    let f = 0, acc = 0; while (f < M.n - 1 && t >= (acc += M.d[f])) f++;
+    if (f === A.last) return;
+    A.last = f;
+    const x = cv.getContext('2d'), col = f % M.c, row = (f / M.c) | 0;
+    x.clearRect(0, 0, cv.width, cv.height);
+    x.drawImage(A.im, col * M.w, row * M.h, M.w, M.h, Math.round(M.o[0]), Math.round(M.o[1]), M.w, M.h);
+  })();
+}
 function showHero(swap) {
   const h = HEROES[S.side], img = $('#hImg');
   document.documentElement.style.setProperty('--c', h.c);
-  img.src = 'images/' + h.id + '.gif';
+  if (HS && HS[h.id]) {
+    const M = HS[h.id], im = new Image();
+    im.src = 'images/heroes/' + h.id + '/home-' + h.id + '.png';   // صورة الهوم داخل مجلد البطل
+    img.width = Math.round(M.o[2]); img.height = Math.round(M.o[3]);
+    heroAnim = { M: M, im: im, t0: performance.now(), total: M.d.reduce((a, b) => a + b, 0), last: -1 };
+  } else img.src = 'images/' + h.id + '.gif';
   img.classList.remove('swap');
   if (swap) { void img.offsetWidth; img.classList.add('swap'); }
   $$('#cards .card').forEach(c => c.classList.toggle('sel', +c.dataset.side === S.side));

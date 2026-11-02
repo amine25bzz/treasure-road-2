@@ -6,11 +6,11 @@ button{font-family:inherit;cursor:pointer;border:0;padding:0;color:inherit;backg
 svg{fill:currentColor}
 
 /* ---------- المسرح بنسبة الصورة 1848x851 ---------- */
-#home{position:fixed;inset:0;display:grid;place-items:center;background:#05030c url(images/background-home.png) center/cover;overflow:hidden}
+#home{position:fixed;inset:0;display:grid;place-items:center;background:#05030c url(images/backgrounds/background-home.png) center/cover;overflow:hidden}
 #home::before{content:"";position:absolute;inset:0;background:rgba(3,2,10,.72);backdrop-filter:blur(8px)}
 #stage{--w:min(100vw,calc(100dvh*2.1716));position:relative;width:var(--w);height:calc(var(--w)/2.1716);container-type:size;overflow:hidden;font-size:1.05cqw;box-shadow:0 0 40px #000}
 #stage>*{position:absolute}
-.bgimg{left:0;top:-9cqh;width:100%;height:109cqh;background:url(images/background-home.png) top center/100% auto no-repeat}
+.bgimg{left:0;top:-9cqh;width:100%;height:109cqh;background:url(images/backgrounds/background-home.png) top center/100% auto no-repeat}
 .vig{inset:0;background:radial-gradient(ellipse at 50% 45%,transparent 55%,rgba(0,0,0,.55))}
 .logo{left:.8cqw;top:.4cqh;width:20.5cqw;filter:drop-shadow(0 .4cqh .6cqh rgba(0,0,0,.7))}
 

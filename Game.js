@@ -7,7 +7,7 @@ const cv = $('#cv'), ctx = cv.getContext('2d');
 const frame = $('#frame');
 
 // خلفيات المراحل الأربع: لا يفوز اللاعب إلا بعد إكمال المراحل 1 → 4
-const BG_IMGS = [0, 1, 2, 3, 4].map(n => 'images/background-stage' + n + '.png');   // المرحلة 0 (السطح) ثم 1 → 4
+const BG_IMGS = [0, 1, 2, 3, 4].map(n => 'images/backgrounds/background-stage' + n + '.png');   // المرحلة 0 (السطح) ثم 1 → 4
 const BG_IMG = BG_IMGS[0];
 let bgCropH = 0;     // 0 = الصورة كاملة تملأ ارتفاع الشاشة
 
@@ -71,6 +71,50 @@ const hiddenAssets = document.createElement('div');
 hiddenAssets.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;overflow:hidden;opacity:.01;pointer-events:none;z-index:-1';
 document.body.appendChild(hiddenAssets);
 
+// ==========================================
+// SPRITE SHEETS (بدل صور GIF): كل حركة = صورة PNG فيها الإطارات متجاورة،
+// والكود يعرض الإطار المناسب حسب الوقت (مثل الألعاب الحقيقية). البيانات في sprites.js
+// ==========================================
+const SHEETS = window.SPRITES || null;
+// كل صورة حركة في مجلدها: الأبطال، الأعداء، الأسلحة، عناصر الطريق
+const IMG_DIR = {
+  backgrounds: 'images/backgrounds/', heroes: 'images/heroes/', enemies: 'images/enemies/',
+  buttons: 'images/buttons/', items: 'images/items/', weapons: 'images/weapons/', ui: 'images/ui/'
+};
+function sheetDir(name) {
+  let m = /^(player\d+h)/.exec(name);
+  if (m) return IMG_DIR.heroes + m[1] + '/';                // كل بطل في مجلده: images/heroes/player1h/
+  m = /^(enemy\d+)/.exec(name);
+  if (m) return IMG_DIR.enemies + m[1] + '/';               // كل عدو في مجلده: images/enemies/enemy1/
+  if (name === 'Landmine') return IMG_DIR.weapons;         // اللغم
+  return IMG_DIR.items;                                    // الصناديق، البراميل، الانفجار، Checkpoint
+}
+function makeSheet(name) {
+  const M = SHEETS[name], img = new Image(), dir = sheetDir(name);
+  img.src = dir + name + '.png';
+  const cum = []; let total = 0;
+  for (const d of M.d) { total += d; cum.push(total); }
+  return {
+    sheet: true, name: name, M: M, img: img, cum: cum, total: total, rows: Math.ceil(M.n / M.c),
+    url: dir + name + '.png', src: dir + name + '.png',
+    icon: name === 'Landmine' ? dir + 'Landmine_icon.png' : dir + name + '.png',
+    // نفس خصائص صورة GIF القديمة حتى يعمل باقي الكود كما هو (أبعاد الإطار الأصلي)
+    get complete() { return img.complete && img.naturalWidth > 0; },
+    get naturalWidth() { return img.complete && img.naturalWidth ? M.o[2] : 0; },
+    get naturalHeight() { return img.complete && img.naturalWidth ? M.o[3] : 0; },
+    addEventListener(t, f, o) { img.addEventListener(t, f, o); }
+  };
+}
+// رقم الإطار بعد ms من بداية الحركة (تكرار، أو التوقف على آخر إطار للحركات التي تُعرض مرة واحدة)
+function sheetFrame(S, ms) {
+  if (S.M.n <= 1) return 0;
+  if (!S.M.loop && ms >= S.total) return S.M.n - 1;
+  const t = ms % S.total;
+  let i = 0; while (i < S.cum.length - 1 && t >= S.cum[i]) i++;
+  return i;
+}
+// تحميل حركة باسمها (مثل 'enemy1_walk'): الصورة من مجلدها حسب sheetDir
+function loadAnim(name) { return makeSheet(name); }
 function loadImg(src) {
     const img = document.createElement('img');
     img.src = src;
@@ -82,25 +126,25 @@ const IMG = {
     // خلفية المرحلة 0 فقط تُحمَّل فوراً، والباقي في الخلفية بعد بدء اللعبة (أسرع بكثير عند الفتح)
     bgs: BG_IMGS.map((src, i) => { const im = document.createElement('img'); hiddenAssets.appendChild(im); if (i === 0) im.src = src; else im.dataset.src = src; return im; }),
     bg: null,
-    gate: loadImg('images/endpoint.gif'),          // بوابة الفوز: في آخر مرحلة فقط
-    checkpoint: loadImg('images/Checkpoint.gif'),  // نهاية المراحل 1 و 2 و 3
-    explosion: loadImg('images/explosion.gif'),
-    crates: CRATE_SETS.map(o => ({ ok: loadImg(`images/${o.ok}.gif`), br: loadImg(`images/${o.br}.gif`) })),
-    barrels: BARREL_SETS.map(o => ({ ok: loadImg(`images/${o.ok}.gif`), br: loadImg(`images/${o.br}.gif`) })),
+    gate: loadAnim('endpoint'),          // بوابة الفوز: في آخر مرحلة فقط
+    checkpoint: loadAnim('Checkpoint'),  // نهاية المراحل 1 و 2 و 3
+    explosion: loadAnim('explosion'),
+    crates: CRATE_SETS.map(o => ({ ok: loadAnim(`${o.ok}`), br: loadAnim(`${o.br}`) })),
+    barrels: BARREL_SETS.map(o => ({ ok: loadAnim(`${o.ok}`), br: loadAnim(`${o.br}`) })),
     use: {
-        fist: loadImg('images/btn-boxing.png'), knife: loadImg('images/btn-knef.png'),
-        pistol: loadImg('images/btn-Pistol.png'), shotgun: loadImg('images/btn-Rifle.png'), smg: loadImg('images/btn-machinegun.png')
+        fist: loadImg('images/buttons/btn-boxing.png'), knife: loadImg('images/buttons/btn-knef.png'),
+        pistol: loadImg('images/buttons/btn-Pistol.png'), shotgun: loadImg('images/buttons/btn-Rifle.png'), smg: loadImg('images/buttons/btn-machinegun.png')
     },
-    item_fist: loadImg('images/btn-boxing.png'),
-    item_health: loadImg('images/heart.png'),
-    item_pistol: loadImg('images/Pistol-gun.png'),
-    item_smg: loadImg('images/machine-gun.png'),
-    item_shotgun: loadImg('images/Rifle-gun.png'),
-    item_knife: loadImg('images/knef.png'),
-    item_shuriken: loadImg('images/knef.png'),   // سكين الطريق (الأرض)
-    item_ammo: loadImg('images/bullets.png'),
-    item_bomb: loadImg('images/bomb.png'),
-    item_mine: loadImg('images/Landmine.gif'),   // اللغم الأرضي
+    item_fist: loadImg('images/buttons/btn-boxing.png'),
+    item_health: loadImg('images/items/heart.png'),
+    item_pistol: loadImg('images/weapons/Pistol-gun.png'),
+    item_smg: loadImg('images/weapons/machine-gun.png'),
+    item_shotgun: loadImg('images/weapons/Rifle-gun.png'),
+    item_knife: loadImg('images/weapons/knef.png'),
+    item_shuriken: loadImg('images/weapons/knef.png'),   // سكين الطريق (الأرض)
+    item_ammo: loadImg('images/weapons/bullets.png'),
+    item_bomb: loadImg('images/weapons/bomb.png'),
+    item_mine: loadAnim('Landmine'),   // اللغم الأرضي
     enemies: {}
 };
 IMG.bg = IMG.bgs[0];
@@ -126,12 +170,13 @@ const SHOOT_FILES = [
 const PLAYER_SUFFIX = {
     idle: '', walk: '_walk', gun: '_gun', punch: '_punch',
     sword: '_sword', injured: '_injured', death: '_death', bomb: '_bomb',
-    loot: '_loot', victory: '_victory'
+    loot: '_loot', victory: '_victory',
+    up: '_up'                         // القفز: صورة واحدة (playerNhup.png) طوال القفزة
 };
 function loadPlayerSprites(base, obj, idx) {
-    for (const k in PLAYER_SUFFIX) obj[k] = loadImg(`images/${base}${PLAYER_SUFFIX[k]}.gif`);
+    for (const k in PLAYER_SUFFIX) obj[k] = loadAnim(`${base}${PLAYER_SUFFIX[k]}`);
     const sf = SHOOT_FILES[idx];
-    for (const k in sf) obj[k] = loadImg(`images/${base}${sf[k]}.gif`);
+    for (const k in sf) obj[k] = loadAnim(`${base}${sf[k]}`);
 }
 // الأبطال الأربعة: نفس أسماء الملفات ونفس الكود لكل بطل (player1h ... player4h)
 // الحركات: player1h.gif / _walk / _punch / _sword / _gun / _Pistol / _machinegun / _Rifle / _shoot* (قديم) / _bomb / _injured / _death / _loot / _victory
@@ -145,7 +190,7 @@ IMG.heroes = HEROES.map(() => ({}));
 loadPlayerSprites(HEROES[gameConfig.side].id, IMG.heroes[gameConfig.side], gameConfig.side);   // البطل المختار فوراً
 IMG.car = document.createElement('img');   // سيارة المشهد الأخير (تُحمَّل لاحقاً)
 function loadOtherHeroes() {   // الأبطال الآخرون (رهائن/حلفاء) بعد بدء اللعبة
-  if (!IMG.car.getAttribute('src')) { hiddenAssets.appendChild(IMG.car); IMG.car.src = 'images/car.png'; }
+  if (!IMG.car.getAttribute('src')) { hiddenAssets.appendChild(IMG.car); IMG.car.src = 'images/items/car.png'; }
   HEROES.forEach((h, i) => { if (!IMG.heroes[i].idle) loadPlayerSprites(h.id, IMG.heroes[i], i); });
 }
 // الرهائن (الأبطال وهم مربوطون): player1h-shok / player2h--gameover / player3h-gameover / player4h--gameover
@@ -157,20 +202,17 @@ const HOSTAGE_FILES = [
   ['player4h--gameover', 'player4h-gameover', 'player4h-shok']       // MAX
 ];
 IMG.hostage = HOSTAGE_FILES.map(list => {
-  let i = 0;
-  const img = loadImg(`images/${list[0]}.gif`);
-  img.addEventListener('error', () => { if (++i < list.length) img.src = `images/${list[i]}.gif`; });   // يجرّب الاسم التالي إن لم يوجد الملف
-  return img;
+  return loadAnim(list.find(n => SHEETS[n]) || list[0]);   // أول اسم موجود من الأسماء المحتملة
 });
 
 // الأعداء: enemyN.gif / enemyN_walk / enemyN_punch / enemyN_injured / enemyN_death
 function loadEnemySprites(n) {
     return {
-        idle:    loadImg(`images/enemy${n}.gif`),
-        walk:    loadImg(`images/enemy${n}_walk.gif`),
-        punch:   loadImg(`images/enemy${n}_punch.gif`),
-        injured: loadImg(`images/enemy${n}_injured.gif`),
-        death:   loadImg(`images/enemy${n}_death.gif`)
+        idle:    loadAnim(`enemy${n}`),
+        walk:    loadAnim(`enemy${n}_walk`),
+        punch:   loadAnim(`enemy${n}_punch`),
+        injured: loadAnim(`enemy${n}_injured`),
+        death:   loadAnim(`enemy${n}_death`)
     };
 }
 IMG.enemies['thug']    = loadEnemySprites(1);
@@ -185,7 +227,14 @@ IMG.enemies['boss']    = loadEnemySprites(9);   // الزعيم
 
 const GATE = {};
 // مقياس الخلفية الحالية: بيكسل الصورة → وحدات العالم
-function bgScale() { const b = IMG.bg; return b && b.naturalHeight ? H / (bgCropH && bgCropH < b.naturalHeight ? bgCropH : b.naturalHeight) : 1; }
+// مقياس إحداثيات المرحلة → وحدات العالم.
+// كل الأماكن (النار، الماء، النافذة، الرهينة، حدود المشي، الباب...) مكتوبة بإحداثيات "صورة مرجعية" (ref)،
+// فإذا صُغّرت صورة الخلفية أو كُبّرت تبقى الأماكن صحيحة تلقائياً (الخلفية تملأ ارتفاع الشاشة دائماً).
+function bgScale() {
+  const S = curStage();
+  if (S && S.ref) return H / S.ref[1];
+  const b = IMG.bg; return b && b.naturalHeight ? H / (bgCropH && bgCropH < b.naturalHeight ? bgCropH : b.naturalHeight) : 1;
+}
 
 // ---------- شعلات متحركة فوق النار المرسومة في الخلفية ----------
 function flameNoise(t, seed) { return Math.sin(t * 9.1 + seed) * .5 + Math.sin(t * 15.7 + seed * 2.3) * .3 + Math.sin(t * 23.3 + seed * 4.1) * .2; }
@@ -342,8 +391,10 @@ const RANGED = {
 // ==========================================
 const SEG_DIST = 750;   // كل 750 بيكسل يظهر طاقم أعداء
 const STAGES = [
-  { title: 'STAGE 0', name: 'THE ROOFTOP', rooftop: true, event: null, evFirst: 0, evGap: 0, packs: [], boss: null },
-  { title: 'STAGE 1', name: 'CASTLE HALL', event: 'ambush', evFirst: 900, evGap: 1300,
+  { title: 'STAGE 0', name: 'THE ROOFTOP', ref: [2172, 724], rooftop: true,
+    // البحر خلف السطح (بإحداثيات الصورة المرجعية): التأثير يُرسم فقط على بكسلات الماء الزرقاء داخل هذه المنطقة
+    sea: { x0: 0, x1: 1882, top: 345, bottom: 585, band: [0, 1340, 359, 400], seed: 375 }, event: null, evFirst: 0, evGap: 0, packs: [], boss: null },
+  { title: 'STAGE 1', name: 'CASTLE HALL', ref: [8041, 714], event: 'ambush', evFirst: 900, evGap: 1300,
     // من قراءة background-stage1.png (8041×714) بإحداثيات الصورة:
     // نار المدفأتين (المدخنة) والمشاعل الكبيرة على أعمدة الحجر. x = المركز، y = قاعدة اللهب، h = ارتفاعه، w = عرضه
     flames: [
@@ -366,18 +417,18 @@ const STAGES = [
   { title: 'STAGE 2', name: 'THE DOCKS', event: 'ninjaDrop', evFirst: 700, evGap: 1000,
     packs: [['ninja', 'thug', 'thug'], ['ninja', 'ninja', 'thug', 'cop'], ['ninja', 'thug', 'cop', 'thug'], ['ninja', 'ninja', 'cop', 'thug', 'thug'], ['ninja', 'ninja', 'ninja', 'cop', 'thug']],
     boss: { type: 'iron', name: 'IRON HANK', spr: 'brute3', hp: 320, dmg: 18, spd: 75 } },
-  { title: 'STAGE 3', name: 'WILD FOREST', event: 'stampede', evFirst: 800, evGap: 1100,
+  { title: 'STAGE 3', name: 'WILD FOREST', ref: [7356, 724], event: 'stampede', evFirst: 800, evGap: 1100,
     // من قراءة background-stage3.png (7356×724) بإحداثيات الصورة:
     // المنع من الأعلى فقط: lo = حافة العشب العلوية (لا مشي فوق العشب). من الأسفل كما في باقي المراحل (ينزل حتى يبقى نصفه ظاهراً)
     walk: {
-      lo: [[0, 500], [3880, 500], [3890, 522], [4660, 522], [5510, 522], [5530, 527], [7356, 527]]
+      lo: [[0, 500], [3858, 500], [3868, 522], [4660, 522], [5510, 522], [5530, 527], [7356, 527]]
     },
-    hostageX: 3340,      // الرهينة مربوط بجذع الشجرة الكبيرة في الخلفية (مركزه في الصورة)، فوق حافة الطريق العلوية
+    hostageX: 3418,      // الرهينة مربوط بجذع الشجرة الكبيرة في الخلفية (مركزه في الصورة)، فوق حافة الطريق العلوية
     // البحيرة: الطريق يكمل داخل الماء (خوض) مع تأثير الماء المتحرك وتموجات الأقدام
-    water: { x0: 3885, x1: 4655, top: 520, bottom: 724 },
+    water: { x0: 3864, x1: 4652, top: 520, bottom: 724 },
     packs: [['soldier', 'raptor', 'thug'], ['soldier', 'soldier', 'raptor', 'raptor'], ['soldier', 'ninja', 'raptor', 'raptor'], ['soldier', 'soldier', 'raptor', 'raptor', 'thug'], ['soldier', 'soldier', 'ninja', 'raptor', 'raptor', 'raptor']],
     boss: { type: 'trike', name: 'KING TRIKE', spr: 'trike', hp: 340, dmg: 18, spd: 95 } },
-  { title: 'STAGE 4', name: 'THE LOST VALLEY', event: ['airstrike', 'ninjaDrop', 'ambush'], evFirst: 700, evGap: 1000,
+  { title: 'STAGE 4', name: 'THE LOST VALLEY', ref: [4000, 335], event: ['airstrike', 'ninjaDrop', 'ambush'], evFirst: 700, evGap: 1000,
     // من قراءة background-stage4.png (4000×335) بإحداثيات الصورة:
     // المشي فوق التراب فقط (حافة العشب العلوية y≈200)، ولا دخول في خط النار أسفل اليمين
     walk: {
@@ -798,13 +849,46 @@ function breakCrate(c) {
   items.push({ x: c.x, y: c.y, t: 0, kind: c.content });
 }
 
+// ---------- سلسلة الضرب (كومبو): كل ضغطة تعرض الحركة التالية من صورة الضرب ----------
+// إطارات punch.png لكل بطل مقسّمة إلى حركات: لكمة، لكمة ثانية، ركبة/ركلة...
+// كلما تابع اللاعب الضغط تكتمل الصورة كلها (يديه ورجليه)، وآخر حركة هي الضربة القوية التي تُسقط العدو
+const MELEE_SEGS = {
+  player1h: [[0], [1, 2], [3, 4], [5, 6]],        // لكمة ← لكمة ← ركبة ثم ركلة ← ركلة عالية
+  player2h: [[0], [1, 2], [3, 4], [5, 6, 7]],     // لكمة ← حراسة ولكمة ← ضربة كوع ← لكمة قوية
+  player3h: [[0], [1, 2], [3, 4, 5]],             // لكمة ← اندفاع بلكمة ← قفزة وركلة
+  player4h: [[0, 1], [2, 3]]                      // لكمة ← لكمة
+};
+const MELEE_TIME = 360;   // مدة كل حركة (نفس مدة الضربة في اللعب) بالميلي ثانية
+function meleeSegs(side) { return MELEE_SEGS[HEROES[side].id] || [[0]]; }
+const _segCache = {};
+// نسخة من صورة الضرب تعرض إطارات حركة واحدة فقط ثم تقف على آخر إطار
+function punchSeg(side, i) {
+  const base = IMG.heroes[side].punch;
+  if (!base || !base.sheet) return base;
+  const segs = meleeSegs(side), fr = segs[i % segs.length].filter(n => n < base.M.n), key = side + ':' + i;
+  if (!fr.length) return base;
+  if (!_segCache[key]) {
+    const per = MELEE_TIME / fr.length, v = Object.create(base);
+    v.pick = ms => fr[Math.min(fr.length - 1, Math.floor(ms / per))];
+    _segCache[key] = v;
+  }
+  return _segCache[key];
+}
+function nextSeg(o, side) {
+  const n = meleeSegs(side).length;
+  o.mseg = o.comboT > 0 ? ((o.mseg || 0) + 1) % n : 0;
+  return o.mseg === n - 1;   // آخر حركة في السلسلة = ضربة قوية
+}
+
 function startMelee(f) {
+  const strong = f.weapon === 'fist' ? nextSeg(f, f.side) : false;
   f.combo = f.comboT > 0 ? (f.combo + 1) % 3 : 0;
   f.comboT = .6; f.st = 'a'; f.atkT = 0; f.ak++; f.ah = false;
-  f.atkType = f.combo === 2 ? 1 : 0; f.hitEnemies = new Set();
+  f.atkType = (f.weapon === 'fist' ? strong : f.combo === 2) ? 1 : 0; f.hitEnemies = new Set();
   playSnd(SND.swing);
 }
 function startMeleeAir(f) {
+  f.mseg = meleeSegs(f.side).length - 1;   // في الهواء: الركلة (آخر حركة)
   f.atkT = 0; f.ak++; f.atkType = 2; f.ah = false;
   f.hitEnemies = new Set();
   playSnd(SND.swing);
@@ -1483,7 +1567,7 @@ function updateAllies(dt) {
         a.face = tgt.x >= a.x ? 1 : -1;
         if (d > 6) { a.x += dx / d * ALLY.spd * dt; a.y += dy / d * ALLY.spd * .7 * dt; a.mv = true; a.ph += dt * 12; }
         if (a.cd <= 0 && inReach(a.x, a.y, 0, a.face, ALLY.reach - 6, tgt.x, tgt.y, 0, tr)) {
-          a.combo = a.comboT > 0 ? (a.combo + 1) % 3 : 0; a.comboT = .7;
+          nextSeg(a, a.side); a.combo = a.comboT > 0 ? (a.combo + 1) % 3 : 0; a.comboT = .7;
           a.st = 'a'; a.atkT = 0; a.ak++; a.did = false; a.cd = ALLY.cd; playSnd(SND.swing);
         }
       } else if (a.dazeT > 0) {
@@ -1517,9 +1601,10 @@ function allySpr(a) {
   const p = IMG.heroes[a.side];
   if (a.dead) return ['death', p.death];
   if (a.st === 'h' || a.st === 'd') return ['inj' + a.hk, p.injured];
-  if (a.st === 'a') return ['melee' + a.ak, p.punch];
+  if (a.st === 'a') return ['melee' + a.ak, punchSeg(a.side, a.mseg || 0)];
   let v = p.victory;
   if ((a.vicT > 0 || (G.phase === 'over' && G.result && G.result.win)) && v && !(v.complete && !v.naturalWidth)) return ['vic', v];
+  if (a.st === 'j' || (a.z || 0) > 2) { const js = jumpSpr(a, p); if (js) return js; }
   if (a.mv) return ['walk', p.walk];
   return ['idle', p.idle];
 }
@@ -1635,9 +1720,45 @@ function dropSprite(o) {
   o._key = null;
 }
 
+// عرض حركة من Sprite Sheet: عنصر خارجي بحجم الإطار الأصلي (للموضع والقلب)، وداخله الإطار الحالي من الصورة
+function placeSheet(o, key, S, x, y, face, zi, vis, sizeFn) {
+  sprUsed.add(o); sprAll.add(o);
+  if (!S.complete) return;
+  let el = o._el;
+  if (!el || !el._sh) {
+    if (el) el.remove();
+    if (o._pend) { o._pend.remove(); o._pend = null; }
+    el = document.createElement('div'); el._sh = 1;
+    el.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none';
+    const inn = document.createElement('div');
+    inn.style.cssText = 'position:absolute;background-repeat:no-repeat';
+    el.appendChild(inn); el._in = inn;
+    layer.appendChild(el); o._el = el; o._key = null;
+  }
+  const now = performance.now();
+  if (o._key !== key) { o._key = key; o._t0 = now; }   // حركة جديدة تبدأ من أول إطار
+  const M = S.M, inn = el._in;
+  if (el._src !== S.url) { inn.style.backgroundImage = 'url(' + S.url + ')'; el._src = S.url; }
+  const d = sizeFn(S), w = d[0], h = d[1];
+  const rx = w * CS / M.o[2], ry = h * CS / M.o[3];
+  const f = S.pick ? S.pick(now - o._t0) : sheetFrame(S, now - o._t0), col = f % M.c, row = (f / M.c) | 0;
+  inn.style.left = (M.o[0] * rx) + 'px'; inn.style.top = (M.o[1] * ry) + 'px';
+  inn.style.width = (M.w * rx) + 'px'; inn.style.height = (M.h * ry) + 'px';
+  inn.style.backgroundSize = (M.c * M.w * rx) + 'px ' + (S.rows * M.h * ry) + 'px';
+  inn.style.backgroundPosition = (-col * M.w * rx) + 'px ' + (-row * M.h * ry) + 'px';
+  el.style.opacity = vis ? '1' : '0';
+  el.style.width = (w * CS) + 'px';
+  el.style.height = (h * CS) + 'px';
+  const ox = (d[3] || 0) * (face === -1 ? -1 : 1);
+  el.style.transform = 'translate(' + ((x - cam - w / 2 + ox) * CS) + 'px,' + ((y + (d[2] || 0) - h) * CS) + 'px) scaleX(' + (face === -1 ? -1 : 1) + ')';
+  el.style.zIndex = zi;
+}
+
 function placeSprite(o, key, shared, x, y, face, zi, vis, sizeFn) {
   if (!shared) return;
+  if (shared.sheet) return placeSheet(o, key, shared, x, y, face, zi, vis, sizeFn);
   sprUsed.add(o); sprAll.add(o);
+  if (o._el && o._el._sh) { o._el.remove(); o._el = null; o._key = null; }
   if (o._key !== key) {
     o._key = key;
     if (o._pend) o._pend.remove();
@@ -1670,6 +1791,11 @@ function placeSprite(o, key, shared, x, y, face, zi, vis, sizeFn) {
 // ==========================================
 const _mc = new Map();
 function measureImg(img) {
+  if (img && img.sheet) {   // قياس محسوب مسبقاً في sprites.js
+    if (!img.complete) return null;
+    const m = img.M.m;
+    return m ? (img._mm || (img._mm = { cw: m[0], ch: m[1], pad: m[2], cx: m[3] })) : null;
+  }
   if (!img || !img.complete || !img.naturalWidth) return null;
   const key = img.src;
   if (_mc.has(key)) return _mc.get(key);
@@ -1707,6 +1833,19 @@ function normSize(el, vis, lying) {
 function heroSize(el, side, lying) {
   return normSize(el, HERO_VIS * (HERO_SCALE[side] || 1), lying);
 }
+// صور القفز: بنفس مقياس صورة المشي (نفس حجم الإطار الأصلي) حتى لا يكبر البطل وهو منكمش في الهواء
+function jumpSize(el, side) {
+  const W = IMG.heroes[side].walk, mw = measureImg(W), mj = measureImg(el);
+  if (!mw || !mj || !W.M || !el.M) return heroSize(el, side, false);
+  const k = HERO_VIS * (HERO_SCALE[side] || 1) / mw.ch * (W.M.o[3] / el.M.o[3]);
+  return [el.naturalWidth * k, el.naturalHeight * k, mj.pad * k, -(mj.cx - el.naturalWidth / 2) * k];
+}
+function jumpSpr(o, p) {   // صورة القفز طوال القفزة (صعوداً ونزولاً)
+  return p.up && p.up.sheet ? ['jup', p.up] : null;
+}
+function charSize(s, el, side) {
+  return s[0] === 'jup' ? jumpSize(el, side) : heroSize(el, side, s[0].indexOf('death') === 0);
+}
 function propSize(el, h) {
   const k = h / (el.naturalHeight || h);
   return [el.naturalWidth * k, h];
@@ -1732,12 +1871,13 @@ function playerSpr(f) {
       if (!im || (im.complete && !im.naturalWidth)) im = p.gun;   // احتياط
       return ['shoot' + f.ak, im];
     }
-    return ['melee' + f.ak, f.weapon === 'fist' ? p.punch : p.sword];
+    return ['melee' + f.ak, f.weapon === 'fist' ? punchSeg(f.side, f.mseg || 0) : p.sword];
   }
   if (G.phase === 'trans' && !f.dead) return ['walk', p.walk];
   if (G.phase === 'over' && G.result && G.result.win && !f.dead) return ['victory', p.victory];
   if (f.mineT > 0) return ['loot' + (f.lk || 0), p.loot];
   if (f.lootT > 0 && !f.mv) return ['loot' + (f.lk || 0), p.loot];
+  if (f.st === 'j') { const js = jumpSpr(f, p); if (js) return js; }
   if (f.mv || f.st === 'j') return ['walk', p.walk];
   return ['idle', p.idle];
 }
@@ -1765,7 +1905,7 @@ function drawChar(g, f, t) {
   if (vis) shadow(g, f.x - cam, f.y + 1 - gz, 22, 6);
   const s = playerSpr(f);
   // فوق الصندوق/البرميل: يُرسم أمامه
-  placeSprite(f, s[0], s[1], f.x, f.y - f.z, f.face, Math.round(f.y) + (gz > 0 ? 30 : 0), vis, el => heroSize(el, f.side, s[0].indexOf('death') === 0));
+  placeSprite(f, s[0], s[1], f.x, f.y - f.z, f.face, Math.round(f.y) + (gz > 0 ? 30 : 0), vis, el => charSize(s, el, f.side));
 }
 
 function render(t) {
@@ -1884,7 +2024,7 @@ function render(t) {
     const vis = !(a.inv > 0 && !a.dead && Math.floor(t * 14) % 2) && !a.hidden;
     if (!a.dead) shadow(g, a.x - cam, a.y + 1, 22, 6);
     const s = allySpr(a);
-    placeSprite(a, s[0], s[1], a.x, a.y - (a.z || 0), a.face, Math.round(a.y), vis, el => heroSize(el, a.side, s[0] === 'death'));
+    placeSprite(a, s[0], s[1], a.x, a.y - (a.z || 0), a.face, Math.round(a.y), vis, el => charSize(s, el, a.side));
     if (!a.dead && !a.hidden) {
       const ax = a.x - cam, top = a.y - (a.z || 0) - HERO_VIS - 10;
       g.textAlign = 'center'; g.font = '800 11px Tajawal,sans-serif';
@@ -2182,7 +2322,97 @@ function updateWater(dt) {
     o._air = air;
   }
 }
+// ---------- البحر (المرحلة 0): تموجات ولمعات يحركها الهواء، مقصوصة على شكل الماء في الصورة ----------
+let seaFx = null;
+const SEA_MASK = new Image(); SEA_MASK.src = 'images/backgrounds/sea-mask-stage0.png';
+function buildSeaMask() {
+  const S = curStage(), A = S.sea, k = bgScale(), img = IMG.bg;
+  if (!A || !img || !img.complete || !img.naturalWidth) return null;
+  const R = 2;   // دقة القناع: بكسلان لكل وحدة عالم
+  const x0 = A.x0 * k, y0 = A.top * k, w = (A.x1 - A.x0) * k, h = (A.bottom - A.top) * k;
+  const cw = Math.round(w * R), ch = Math.round(h * R);
+  const mask = document.createElement('canvas'); mask.width = cw; mask.height = ch;
+  const mx = mask.getContext('2d');
+  const sx = img.naturalWidth / S.ref[0], sy = img.naturalHeight / S.ref[1];
+  let ok = false;
+  if (S.rooftop && SEA_MASK.complete && SEA_MASK.naturalWidth) {
+    // قناع البحر الجاهز: يعمل حتى عند فتح اللعبة من ملف محلي
+    const mk = SEA_MASK.naturalWidth / S.ref[0];
+    mx.drawImage(SEA_MASK, A.x0 * mk, A.top * mk, (A.x1 - A.x0) * mk, (A.bottom - A.top) * mk, 0, 0, cw, ch);
+    ok = true;
+  } else try {
+    mx.drawImage(img, A.x0 * sx, A.top * sy, (A.x1 - A.x0) * sx, (A.bottom - A.top) * sy, 0, 0, cw, ch);
+    const d = mx.getImageData(0, 0, cw, ch), p = d.data, N = cw * ch;
+    const blue = new Uint8Array(N), keep = new Uint8Array(N);
+    for (let j = 0, i = 0; j < N; j++, i += 4) {
+      const r = p[i], gg = p[i + 1], b = p[i + 2];
+      blue[j] = (b > 120 && b > r + 45 && b >= gg - 10 && gg > 50) ? 1 : 0;
+    }
+    // نأخذ فقط الماء المتصل بالبحر المفتوح (لا الأبواب ولا النوافذ الزرقاء ولا الأرضية)
+    const stack = [], sy0 = Math.round((A.seed - A.top) * k * R);
+    for (let x = 0; x < cw; x++) { const j = sy0 * cw + x; if (blue[j]) { keep[j] = 1; stack.push(j); } }
+    while (stack.length) {
+      const j = stack.pop(), x = j % cw;
+      const nb = [x > 0 ? j - 1 : -1, x < cw - 1 ? j + 1 : -1, j - cw, j + cw];
+      for (const q of nb) if (q >= 0 && q < N && blue[q] && !keep[q]) { keep[q] = 1; stack.push(q); }
+    }
+    // تآكل خفيف حتى لا يلمس التأثير حواف السطح أو المباني
+    for (let j = 0, i = 0; j < N; j++, i += 4) {
+      const x = j % cw;
+      const ok2 = keep[j] && (x < 2 || keep[j - 2]) && (x > cw - 3 || keep[j + 2]) && keep[j - 2 * cw] && keep[j + 2 * cw];
+      p[i] = p[i + 1] = p[i + 2] = 255; p[i + 3] = ok2 ? 255 : 0;
+    }
+    mx.putImageData(d, 0, 0); ok = true;
+  } catch (e) {
+    // عند فتح اللعبة من ملف محلي يمنع المتصفح قراءة البكسلات: نستعمل شريط البحر المستطيل فقط
+    const B = A.band; mx.fillStyle = '#fff';
+    mx.fillRect((B[0] - A.x0) * k * R, (B[2] - A.top) * k * R, (B[1] - B[0]) * k * R, (B[3] - B[2]) * k * R);
+  }
+  const fx = document.createElement('canvas'); fx.width = cw; fx.height = ch;
+  return { stage: G.stage, mask: mask, fx: fx, x0: x0, y0: y0, w: w, h: h, R: R, ok: ok };
+}
+function drawSea(g, t) {
+  if (!curStage().sea) return;
+  if (!seaFx || seaFx.stage !== G.stage || (!seaFx.ok && SEA_MASK.complete && SEA_MASK.naturalWidth)) seaFx = buildSeaMask();
+  const F = seaFx; if (!F) return;
+  if (F.x0 + F.w < cam - 10 || F.x0 > cam + VW + 10) return;
+  const c = F.fx.getContext('2d'), R = F.R, W = F.fx.width, Hh = F.fx.height;
+  c.globalCompositeOperation = 'source-over'; c.clearRect(0, 0, W, Hh);
+  // أمواج شفافة ناعمة تتحرك مع نسيم خفيف: قمة فاتحة وظل خفيف تحتها
+  c.filter = 'blur(' + (.6 * R) + 'px)';
+  for (let i = 0; i < 18; i++) {
+    const k = i / 17, y = (6 + k * (F.h - 10)) * R + Math.sin(t * .6 + i * 1.3) * 1.5 * R;
+    const amp = (.8 + k * 2.2) * R, fr = .035 - k * .018, sp = .7 + k * .4;
+    const al = .22 + .14 * (.5 + .5 * Math.sin(t * .9 + i * 1.9));
+    for (const [col, dy, lw] of [['255,255,255', 0, (1 + k * 1.6) * R], ['0,45,95', (1.5 + k * 2) * R, (1.2 + k * 2) * R]]) {
+      c.strokeStyle = 'rgba(' + col + ',' + (col[0] === '0' ? al * .7 : al) + ')';
+      c.lineWidth = lw; c.beginPath();
+      for (let x = -20; x <= W + 20; x += 8 * R) {
+        const yy = y + dy + Math.sin((x / R + F.x0) * fr + t * sp + i * 2.1) * amp;
+        x === -20 ? c.moveTo(x, yy) : c.lineTo(x, yy);
+      }
+      c.stroke();
+    }
+  }
+  c.filter = 'none';
+  // لمعات خفيفة جدا تنجرف ببطء
+  for (let i = 0; i < 60; i++) {
+    const k = ((i * 37) % 100) / 100;
+    const gx = (((i * 113.7) + t * (6 + k * 8)) % (F.w + 40)) - 20, gy = 4 + k * (F.h - 8);
+    const a = .35 * Math.sin(t * 1.6 + i * 2.3);
+    if (a <= .03) continue;
+    c.fillStyle = 'rgba(255,255,255,' + a + ')';
+    c.fillRect(gx * R, gy * R, (2 + k * 4) * R, Math.max(1, .7 * R));
+  }
+  // قص التأثير على شكل الماء فقط
+  c.globalCompositeOperation = 'destination-in';
+  c.drawImage(F.mask, 0, 0);
+  c.globalCompositeOperation = 'source-over';
+  g.drawImage(F.fx, F.x0 - cam, F.y0, F.w, F.h);
+}
+
 function drawWater(g, t) {
+  drawSea(g, t);
   const L = lakeW();
   if (L) drawWaterRect(g, t, L, 16, 46);
   const P = curStage().pools;
@@ -2379,7 +2609,7 @@ function startCountdown() {
   stageLbl.hidden = true;
   $('#hp0 .nm').textContent = HEROES[G.side] ? HEROES[G.side].name : 'HERO';
   $('#hp0').className = 'hpc s' + G.side;
-  $('#hpPortrait').src = 'images/face-' + (HEROES[G.side] ? HEROES[G.side].id : 'player1h') + '.png';
+  $('#hpPortrait').src = (id => 'images/heroes/' + id + '/face-' + id + '.png')(HEROES[G.side] ? HEROES[G.side].id : 'player1h');
 }
 
 function endRound(win) {
@@ -2589,7 +2819,7 @@ function drawDoor(g, t) {
 // السيارة الحمراء (car.png وفيها MINA و MAX) تسير، وJACK و REX يجريان خلفها ثم بجانبها ويغيّران سرعتهما
 // ==========================================
 const ENDING = {
-  fade: .55, bgStage: 3, endHold: .8,        // المشهد يستمر حتى نهاية خلفية الغابة، ثم لحظة قصيرة قبل الفوز
+  fade: .55, bgStage: 3, endHold: 3, endBlack: 2,   // عند نهاية الخلفية: الأبطال يتوقفون ويحتفلون 3 ثوانٍ، ثم تظلم الشاشة تدريجياً (2 ث) ثم نافذة الفوز
   camSpeed: 92,                               // سرعة تحرك الكاميرا/السيارة/الأبطال في العالم
   carH: 118, carY: 328, carScreenX: .6,       // ارتفاع السيارة على الشاشة، عمقها، ومكانها الأفقي
   // عجلات car.png (بإحداثيات الصورة 1000×476): المركز ونصف القطر
@@ -2598,8 +2828,12 @@ const ENDING = {
   runners: [{ side: 0, y: 366, base: 230, amp: 210, w: .52, ph: .4 }, { side: 1, y: 350, base: 160, amp: 190, w: .37, ph: 2.6 }]
 };
 let carEl = null, endDust = [], endRunners = [];
+const endBlack = document.createElement('div');
+endBlack.style.cssText = 'position:absolute;inset:0;z-index:25;background:#000;opacity:0;pointer-events:none';
+frame.appendChild(endBlack);
 function startEnding() {
-  G.phase = 'ending'; G.endT = 0; G.endHoldT = 0; G.endScene = true; G.endSwitched = false;
+  G.phase = 'ending'; G.endT = 0; G.endHoldT = 0; G.endScene = true; G.endSwitched = false; G.endArrived = false; G.wheelT = 0;
+  endBlack.style.opacity = '0';
   bgDiv.style.opacity = '0'; layer.style.opacity = '0';
 }
 function switchToEndingScene() {
@@ -2625,13 +2859,15 @@ function stepEnding(dt) {
   G.endT += dt;
   if (!G.endSwitched) { if (G.endT >= ENDING.fade && bgReady(ENDING.bgStage)) switchToEndingScene(); return; }
   const T = G.endT - ENDING.fade;
+  const arrived = G.endArrived;
+  if (!arrived) G.wheelT += dt;
   // الكاميرا تتقدم بسلاسة (تسارع في البداية)
   cam = Math.min(WORLD - VW, ENDING.camSpeed * Math.max(0, T - .6 * (1 - Math.min(1, T / 1.2))));
   const C = endingCar();
   // غبار العجلات: سحابات تتخلف خلف السيارة
   const L = lakeW();
   const wet = x => L && x > L.x0 && x < L.x1;
-  for (const wh of ENDING.wheels) {
+  for (const wh of (arrived ? [] : ENDING.wheels)) {
     const wx = C.x - C.w / 2 + wh.x * C.k;
     if (wet(wx)) {   // داخل البحيرة: رذاذ وتموجات بدل الغبار
       if (Math.random() < .5) ripples.push({ x: wx, y: C.y, t: 0, life: 1, r: 34 });
@@ -2641,7 +2877,7 @@ function stepEnding(dt) {
     if (Math.random() < .8) endDust.push({ x: C.x - C.w / 2 + (wh.x - 70) * C.k, y: C.y + rr(-3, 3), z: rr(0, 6), vx: ENDING.camSpeed * rr(.05, .35), vz: rr(8, 30), r: rr(5, 9), gr: rr(22, 40), l: rr(.9, 1.6), t: 0 });
   }
   // العدّاءان يغيّران سرعتهما: مرة خلف السيارة ومرة بجانبها
-  for (const r of endRunners) {
+  for (const r of (arrived ? [] : endRunners)) {
     const off = r.base + r.amp * Math.sin(T * r.w + r.ph) + 25 * Math.sin(T * r.w * 3.1 + r.ph);
     r.x = C.x - off; r.y2 = r.y + Math.sin(T * 7 + r.ph) * 1.5;
     r.dustT = (r.dustT || 0) - dt;
@@ -2650,9 +2886,22 @@ function stepEnding(dt) {
   }
   for (const d of endDust) { d.t += dt; d.x += d.vx * dt; d.z += d.vz * dt; d.vz *= .96; }
   endDust = endDust.filter(d => d.t < d.l);
-  // ينتهي المشهد عند وصول الكاميرا إلى نهاية الخلفية
-  if (cam >= WORLD - VW - .5) G.endHoldT = (G.endHoldT || 0) + dt;
-  if (G.phase === 'ending' && G.endHoldT >= ENDING.endHold) { G.phase = 'play'; endRound(true); }
+  // عند وصول الكاميرا إلى نهاية الخلفية: السيارة والأبطال يتوقفون ويحتفلون (صور الفوز) 3 ثوانٍ،
+  // ثم تظلم الشاشة تدريجياً حتى الأسود الداكن، ثم تظهر نافذة الفوز
+  if (!arrived && cam >= WORLD - VW - .5) {
+    G.endArrived = true; G.endHoldT = 0;
+    const C2 = endingCar();
+    endRunners.forEach((r, i) => {   // كل بطل يقف في مكان ظاهر بجانب السيارة
+      r.x = Math.max(cam + 40 + i * 50, Math.min(r.x, C2.x - C2.w / 2 - 30 - i * 55)); r.y2 = r.y; r.vicT = 0;
+    });
+  }
+  if (G.endArrived) {
+    G.endHoldT += dt;
+    endRunners.forEach(r => r.vicT += dt);
+    const k = Math.max(0, Math.min(1, (G.endHoldT - ENDING.endHold) / ENDING.endBlack));
+    endBlack.style.opacity = String(k * k * (3 - 2 * k));
+    if (G.phase === 'ending' && k >= 1) { G.phase = 'play'; endRound(true); banner(''); G.overT = 1.5; }
+  }
 }
 function renderEnding(g, t) {
   if (!G.endSwitched) return;
@@ -2670,16 +2919,17 @@ function renderEnding(g, t) {
   if (carEl && img.complete && img.naturalWidth) {
     const cx = carEl.getContext('2d');
     cx.clearRect(0, 0, 1000, 476);
-    const bob = Math.sin(t * 17) * 1.2 + Math.sin(t * 5.3) * 1;   // ارتجاج الهيكل (العجلات ثابتة على الأرض)
+    const bob = G.endArrived ? 0 : Math.sin(t * 17) * 1.2 + Math.sin(t * 5.3) * 1;   // ارتجاج الهيكل (يتوقف عند الوصول)
     cx.drawImage(img, 0, bob);
-    const ang = G.endT * 9;   // دوران العجلات باتجاه الحركة (يمين)
+    const ang = G.wheelT * 9;   // دوران العجلات باتجاه الحركة (يمين) ويتوقف عند الوصول
     for (const wh of ENDING.wheels) {
-      for (let j = 0; j < 3; j++) {   // نسخ متتالية = ضبابية حركة
+      for (let j = 0; j < (G.endArrived ? 1 : 3); j++) {   // نسخ متتالية = ضبابية حركة
         cx.save(); cx.globalAlpha = j === 0 ? 1 : .35;
         cx.beginPath(); cx.arc(wh.x, wh.y, wh.r, 0, 6.283); cx.clip();
         cx.translate(wh.x, wh.y); cx.rotate(ang - j * .12); cx.drawImage(img, -wh.x, -wh.y);
         cx.restore();
       }
+      if (G.endArrived) continue;
       // غبار يغطي أسفل العجلة
       const gg = cx.createRadialGradient(wh.x - 40, wh.y + 80, 4, wh.x - 40, wh.y + 80, 120);
       gg.addColorStop(0, 'rgba(200,165,118,.55)'); gg.addColorStop(1, 'rgba(200,165,118,0)');
@@ -2694,11 +2944,12 @@ function renderEnding(g, t) {
     const p = IMG.heroes[r.side];
     if (!p || !p.walk) continue;
     shadow(g, r.x - cam, r.y + 1, 22, 6);
-    placeSprite(r.o, 'run', p.walk, r.x, r.y2, 1, Math.round(r.y), true, el => heroSize(el, r.side, false));
+    if (G.endArrived && p.victory) placeSprite(r.o, 'victory', p.victory, r.x, r.y2, 1, Math.round(r.y), true, el => heroSize(el, r.side, false));
+    else placeSprite(r.o, 'run', p.walk, r.x, r.y2, 1, Math.round(r.y), true, el => heroSize(el, r.side, false));
   }
 }
 function stopEnding() {
-  G.endScene = false; G.endSwitched = false;
+  G.endScene = false; G.endSwitched = false; G.endArrived = false; endBlack.style.opacity = '0';
   if (carEl && carEl.parentNode) carEl.remove();
   endDust = []; endRunners = [];
 }
@@ -2861,7 +3112,7 @@ function updateHUD() {
       html += '<div class="wslot' + (f.weapon === w ? ' active' : '') + '"><img src="' + icon + '"><span class="am">' + (am === Infinity ? '∞' : am) + '</span></div>';
     }
     if (f.bombs > 0) html += '<div class="wslot"><img src="' + IMG.item_bomb.src + '"><span class="am">' + f.bombs + '</span></div>';
-    if (f.mines > 0) html += '<div class="wslot"><img src="' + IMG.item_mine.src + '"><span class="am">M' + f.mines + '</span></div>';
+    if (f.mines > 0) html += '<div class="wslot"><img src="' + (IMG.item_mine.icon || IMG.item_mine.src) + '"><span class="am">M' + f.mines + '</span></div>';
     if (wEl.innerHTML !== html) wEl.innerHTML = html;
   }
 }
